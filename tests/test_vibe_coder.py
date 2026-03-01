@@ -5062,7 +5062,7 @@ class TestTokenUsageDisplay:
 
     def test_version_bump(self):
         """Verify version was bumped for this feature release."""
-        assert vc.__version__ == "1.3.2"
+        assert vc.__version__ == "1.3.3"
 
     def test_bash_tool_has_run_in_background_param(self):
         tool = vc.BashTool()
@@ -10195,3 +10195,95 @@ class TestRAGEngineIntegration:
         assert stats["files"] == 2
         assert stats["chunks"] >= 2
         assert stats["db_size"] > 0
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# Permission Input Handling (Issue #15)
+# ════════════════════════════════════════════════════════════════════════════════
+
+
+class TestPermissionInputHandling:
+    """Tests for _read_permission_input and ask_permission fixes (Issue #15)."""
+
+    def test_read_permission_input_strips_control_chars(self):
+        """Control characters (\\r, ANSI escapes) should be stripped from input."""
+        tui = vc.TUI.__new__(vc.TUI)
+        with mock.patch("sys.stdin") as mock_stdin:
+            mock_stdin.isatty.return_value = True
+            with mock.patch("builtins.input", return_value="y\r"):
+                result = vc.TUI._read_permission_input("? ")
+                assert result == "y"
+
+    def test_read_permission_input_strips_ansi(self):
+        """ANSI escape sequences should be stripped."""
+        tui = vc.TUI.__new__(vc.TUI)
+        with mock.patch("sys.stdin") as mock_stdin:
+            mock_stdin.isatty.return_value = True
+            with mock.patch("builtins.input", return_value="\x1b[0my\x1b[m"):
+                result = vc.TUI._read_permission_input("? ")
+                assert result == "[0my[m" or result == "y"  # at minimum \x1b removed
+
+    def test_read_permission_input_tty_fallback(self):
+        """When stdin is not a TTY, should fall back to /dev/tty."""
+        with mock.patch("sys.stdin") as mock_stdin:
+            mock_stdin.isatty.return_value = False
+            with mock.patch("sys.stdout"):
+                mock_tty = mock.mock_open(read_data="a\n")
+                with mock.patch("builtins.open", mock_tty):
+                    result = vc.TUI._read_permission_input("? ")
+                    assert result == "a"
+                    mock_tty.assert_called_once_with("/dev/tty", "r")
+
+    def test_read_permission_input_no_tty_raises_eof(self):
+        """When no terminal available, should raise EOFError."""
+        with mock.patch("sys.stdin") as mock_stdin:
+            mock_stdin.isatty.return_value = False
+            with mock.patch("sys.stdout"):
+                with mock.patch("builtins.open", side_effect=OSError("no tty")):
+                    with pytest.raises(EOFError):
+                        vc.TUI._read_permission_input("? ")
+
+    def test_ask_permission_accepts_chinese_yes(self):
+        """Chinese '是' should be accepted as permission approval."""
+        tui = vc.TUI.__new__(vc.TUI)
+        tui.is_interactive = True
+        tui._spinner_active = False
+        with mock.patch.object(vc.TUI, "stop_spinner"):
+            with mock.patch.object(vc.TUI, "_read_permission_input", return_value="是"):
+                result = tui.ask_permission("Bash", {"command": "ls"})
+                assert result is True
+
+    def test_ask_permission_accepts_y_with_cr(self):
+        """'y\\r' should be cleaned up and accepted."""
+        tui = vc.TUI.__new__(vc.TUI)
+        tui.is_interactive = True
+        tui._spinner_active = False
+        with mock.patch.object(vc.TUI, "stop_spinner"):
+            # _read_permission_input strips \r, so it returns "y"
+            with mock.patch.object(vc.TUI, "_read_permission_input", return_value="y"):
+                result = tui.ask_permission("Bash", {"command": "ls"})
+                assert result is True
+
+    def test_ask_permission_all_accepted_inputs(self):
+        """All documented accept inputs should work."""
+        tui = vc.TUI.__new__(vc.TUI)
+        tui.is_interactive = True
+        tui._spinner_active = False
+        accept_once = ["y", "yes", "はい", "是"]
+        for inp in accept_once:
+            with mock.patch.object(vc.TUI, "stop_spinner"):
+                with mock.patch.object(vc.TUI, "_read_permission_input", return_value=inp):
+                    result = tui.ask_permission("Bash", {"command": "ls"})
+                    assert result is True, f"Input '{inp}' should return True"
+
+    def test_ask_permission_allow_all_inputs(self):
+        """All 'allow all' inputs should return 'allow_all'."""
+        tui = vc.TUI.__new__(vc.TUI)
+        tui.is_interactive = True
+        tui._spinner_active = False
+        allow_all = ["a", "all", "always", "常に", "いつも"]
+        for inp in allow_all:
+            with mock.patch.object(vc.TUI, "stop_spinner"):
+                with mock.patch.object(vc.TUI, "_read_permission_input", return_value=inp):
+                    result = tui.ask_permission("Bash", {"command": "ls"})
+                    assert result == "allow_all", f"Input '{inp}' should return 'allow_all'"

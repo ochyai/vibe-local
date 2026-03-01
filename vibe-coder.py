@@ -98,7 +98,7 @@ def _cleanup_scroll_region():
 
 atexit.register(_cleanup_scroll_region)
 
-__version__ = "1.3.2"
+__version__ = "1.3.3"
 
 # ════════════════════════════════════════════════════════════════════════════════
 # ANSI Colors
@@ -6465,7 +6465,7 @@ class TUI:
         print(f"  {_y}│{C.RESET}  [n] Deny (Enter)  [d] Deny all   [Y] Approve everything")
         print(f"  {_y}╰{'─' * box_w}{C.RESET}")
         try:
-            reply = input(f"  {_y}? {C.RESET}").strip()
+            reply = self._read_permission_input(f"  {_y}? {C.RESET}")
         except (EOFError, KeyboardInterrupt):
             print()
             return False
@@ -6473,7 +6473,7 @@ class TUI:
         reply_lower = reply.lower()
         if reply == "Y" or reply_lower in ("yes-all", "approve-all"):
             return "yes_mode"
-        elif reply_lower in ("y", "yes", "はい"):
+        elif reply_lower in ("y", "yes", "はい", "是"):
             return True
         elif reply_lower in ("a", "all", "always", "常に", "いつも"):
             return "allow_all"
@@ -6481,6 +6481,30 @@ class TUI:
             return "deny_all"
         else:
             return False
+
+    @staticmethod
+    def _read_permission_input(prompt_str):
+        """Read permission input with /dev/tty fallback for non-TTY stdin."""
+        import re as _re
+        # Try normal input() first if stdin is a TTY
+        if sys.stdin.isatty():
+            reply = input(prompt_str)
+        else:
+            # stdin is not a TTY (piped, redirected, etc.) — try /dev/tty
+            sys.stdout.write(prompt_str)
+            sys.stdout.flush()
+            try:
+                with open("/dev/tty", "r") as tty:
+                    reply = tty.readline()
+                    if not reply:
+                        raise EOFError("No input from /dev/tty")
+                    reply = reply.rstrip("\n")
+            except (OSError, IOError):
+                # No terminal available at all — cannot prompt
+                raise EOFError("No terminal available for permission prompt")
+        # Strip control characters (some terminals add \r, ANSI escapes, etc.)
+        reply = _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', reply)
+        return reply.strip()
 
     def start_spinner(self, label="Thinking"):
         """Show a neon spinner while waiting."""
