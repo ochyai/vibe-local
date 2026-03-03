@@ -704,6 +704,7 @@ class Config:
         self.ollama_host = self.DEFAULT_OLLAMA_HOST
         self.model = self.DEFAULT_MODEL
         self.sidecar_model = self.DEFAULT_SIDECAR
+        self.tooluse_model = ""       # Model for offloading tool execution
         self.max_tokens = self.DEFAULT_MAX_TOKENS
         self.temperature = self.DEFAULT_TEMPERATURE
         self.context_window = self.DEFAULT_CONTEXT_WINDOW
@@ -784,6 +785,8 @@ class Config:
                         self.model = val
                     elif key == "SIDECAR_MODEL" and val:
                         self.sidecar_model = val
+                    elif key == "TOOLUSE_MODEL" and val:
+                        self.tooluse_model = val
                     elif key == "OLLAMA_HOST" and val:
                         self.ollama_host = val
                     elif key == "MAX_TOKENS" and val:
@@ -816,6 +819,8 @@ class Config:
             self.sidecar_model = os.environ["VIBE_CODER_SIDECAR"]
         if os.environ.get("VIBE_LOCAL_SIDECAR_MODEL"):
             self.sidecar_model = os.environ["VIBE_LOCAL_SIDECAR_MODEL"]
+        if os.environ.get("VIBE_LOCAL_TOOLUSE_MODEL"):
+            self.tooluse_model = os.environ["VIBE_LOCAL_TOOLUSE_MODEL"]
         if os.environ.get("VIBE_CODER_DEBUG") == "1" or os.environ.get("VIBE_LOCAL_DEBUG") == "1":
             self.debug = True
 
@@ -1223,6 +1228,14 @@ def _get_vram_gb():
 # System Prompt
 # ════════════════════════════════════════════════════════════════════════════════
 
+def _is_reasoning_model(model_name):
+    """Detect if the model is a reasoning/thinking model (Qwen 3.5, R1, o1, etc.)"""
+    if not model_name:
+        return False
+    m = model_name.lower()
+    return any(k in m for k in ["qwen3.5", "r1", "o1", "o3", "thinking", "reasoning", "tooluse"])
+
+
 def _build_system_prompt(config):
     """Build system prompt with environment info and OS-specific hints."""
     cwd = config.cwd
@@ -1230,8 +1243,18 @@ def _build_system_prompt(config):
     shell = os.environ.get("SHELL", "unknown")
     os_ver = platform.platform()
 
-    prompt = """You are a helpful coding assistant. You EXECUTE tasks using tools and explain results clearly.
-IMPORTANT: Never output <think> or </think> tags in your responses. Use the function calling API exclusively — do not emit <tool_call> XML blocks.
+    # Reasoning model adjustment: allow <think> tags for models that need them
+    is_reasoning = _is_reasoning_model(config.model)
+    if is_reasoning:
+        think_rule = (
+            "あなたは思考型モデルです。まず <think> タグ内で日本語で思考し、その後に必ずツールを呼び出してください。\n"
+            "ツール呼び出しには標準の function calling API を使用してください。"
+        )
+    else:
+        think_rule = "IMPORTANT: Never output <think> or </think> tags in your responses. Use the function calling API exclusively."
+
+    prompt = f"""You are a helpful coding assistant. You EXECUTE tasks using tools and explain results clearly.
+{think_rule}
 
 CORE RULES:
 1. TOOL FIRST. Call a tool immediately — no explanation before the tool call.
@@ -6866,6 +6889,67 @@ class Agent:
                     finally:
                         if hasattr(response, 'close'):
                             response.close()
+
+                # --- Tooluse Offloading ---
+                # If we have a tooluse model and no tool calls were generated,
+                # but the model clearly expressed intent to act, offload to the tooluse model.
+                if not tool_calls and self.config.tooluse_model and _is_reasoning_model(self.config.model):
+                    # Strict heuristic: only act if there's intent, but NOT if it's a summary of success
+                    is_summary = any(kw in text for kw in ["正常に", "完了", "成功", "できました", "作成しました", "済み", "報告"])
+                    needs_action = any(kw in text.lower() or kw in text for kw in ["Write", "Edit", "Bash", "実行", "作成", "呼び出"])
+                    
+                    if needs_action and not is_summary:
+                        if self.config.debug:
+                            print(f"{C.DIM}[debug] Offloading to tooluse model: {self.config.tooluse_model}{C.RESET}", file=sys.stderr)
+                        
+                        self.tui.start_spinner(f"Acting ({self.config.tooluse_model})")
+                        
+                        # Use a focused history for the tooluse model to avoid confusion from past turns
+                        hist = self.session.get_messages()
+                        # System prompt + original user message + planner's reasoning
+                        actor_messages = [hist[0]] + hist[-2:] + [
+                            {"role": "user", "content": "命令：Plannerの計画を遂行するために、直ちに適切なツールを呼び出してください。JSONのみを出力し、説明は一切禁止します。"}
+                        ]
+                        
+                        try:
+                            # Non-streaming for speed/simplicity in offload
+                            actor_resp = self.client.chat(
+                                model=self.config.tooluse_model,
+                                messages=actor_messages,
+                                tools=tools if tools else None,
+                                stream=False
+                            )
+                            
+                            class SilentTUI:
+                                def show_sync_response(self, data, known_tools):
+                                    choice = data.get("choices", [{}])[0]
+                                    msg = choice.get("message", {})
+                                    c = msg.get("content", "") or ""
+                                    tcs = msg.get("tool_calls", [])
+                                    if not tcs and c:
+                                        extracted, _ = _extract_tool_calls_from_text(c, known_tools)
+                                        if extracted: tcs = extracted
+                                    return c, tcs
+                            
+                            text_actor, tool_calls_actor = SilentTUI().show_sync_response(
+                                actor_resp, known_tools=self.registry.names()
+                            )
+                            
+                            if self.config.debug:
+                                print(f"{C.DIM}[debug] Tooluse model response: {repr(text_actor)}{C.RESET}", file=sys.stderr)
+
+                            # If tooluse model provided tool calls, use them immediately
+                            if tool_calls_actor:
+                                tool_calls = tool_calls_actor
+                                # Append actor text only if it looks like useful info (not just the JSON)
+                                if text_actor and len(text_actor) > 10 and not text_actor.strip().startswith('{'):
+                                    text += "\n" + text_actor
+                        except Exception as e:
+                            if self.config.debug:
+                                print(f"{C.RED}[debug] Tooluse offload failed: {e}{C.RESET}", file=sys.stderr)
+                        finally:
+                            self.tui.stop_spinner()
+                # --- END Tooluse Offloading ---
 
                 # Reconcile token estimate with actual usage from API
                 # Skip reconciliation right after compaction to avoid drift

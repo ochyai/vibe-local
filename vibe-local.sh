@@ -29,6 +29,7 @@ VIBE_CODER_SCRIPT="${LIB_DIR}/vibe-coder.py"
 # デフォルト値
 MODEL=""
 SIDECAR_MODEL=""
+TOOLUSE_MODEL=""
 OLLAMA_HOST="http://localhost:11434"
 VIBE_LOCAL_DEBUG=0
 
@@ -38,14 +39,16 @@ if [ -f "$CONFIG_FILE" ]; then
     _val() { grep -E "^${1}=" "$CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' | sed "s/^[\"']//;s/[\"'[:space:]]*$//;s/[[:space:]]*#.*//" || true; }
     _m="$(_val MODEL)"
     _s="$(_val SIDECAR_MODEL)"
+    _t="$(_val TOOLUSE_MODEL)"
     _h="$(_val OLLAMA_HOST)"
     _d="$(_val VIBE_LOCAL_DEBUG)"
     [ -n "$_m" ] && MODEL="$_m"
     [ -n "$_s" ] && SIDECAR_MODEL="$_s"
+    [ -n "$_t" ] && TOOLUSE_MODEL="$_t"
     [ -n "$_h" ] && OLLAMA_HOST="$_h"
     [ -n "$_d" ] && VIBE_LOCAL_DEBUG="$_d"
     unset -f _val
-    unset _m _s _h _d
+    unset _m _s _t _h _d
 fi
 
 # [SEC] Validate OLLAMA_HOST - only allow localhost (SSRF prevention)
@@ -301,6 +304,7 @@ echo ""
 OLLAMA_HOST="$OLLAMA_HOST" \
 VIBE_LOCAL_MODEL="${MODEL:-}" \
 VIBE_LOCAL_SIDECAR_MODEL="${SIDECAR_MODEL:-}" \
+VIBE_LOCAL_TOOLUSE_MODEL="${TOOLUSE_MODEL:-}" \
 VIBE_LOCAL_DEBUG="${VIBE_LOCAL_DEBUG:-0}" \
 exec python3 "$VIBE_CODER_SCRIPT" \
     ${MODEL_ARGS[@]+"${MODEL_ARGS[@]}"} \
