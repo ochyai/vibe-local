@@ -7107,18 +7107,12 @@ class Agent:
                         break
                     
                     if not perm_result:
-                        _consecutive_denies += 1
-                        # If the user denies repeatedly, assume they want to stop the current approach
-                        if _consecutive_denies >= 3:
-                            _p(f"\n{C.YELLOW}Multiple tools denied. Stopping current plan.{C.RESET}")
-                            results.append(ToolResult(tc_id, "Error: user has repeatedly denied multiple tool execution attempts. STOP THIS PLAN and ask for instructions or a completely different approach.", True))
-                            self.tui.show_tool_result(tool_name, "Aborted: too many denies", True)
-                            # Stop the loop early to force AI to think
-                            break
-                        
-                        results.append(ToolResult(tc_id, "Error: permission denied by user. DO NOT retry this exact command or variations of it in this session unless the user explicitly asks you to try again with different parameters.", True))
-                        self.tui.show_tool_result(tool_name, "Permission denied", True)
-                        continue
+                        # If the user denies once, assume they want to stop the current approach
+                        _p(f"\n{C.YELLOW}Tool execution denied. Stopping current approach.{C.RESET}")
+                        results.append(ToolResult(tc_id, "Error: user has denied tool execution. STOP this approach, do not retry variations of this command, and ask for instructions or a completely different approach.", True))
+                        self.tui.show_tool_result(tool_name, "Denied by user", True)
+                        # Stop the loop early to force AI to think/respond to the denial
+                        break
                     
                     # If allowed, reset deny counter for this tool use
                     _consecutive_denies = 0
