@@ -2456,7 +2456,15 @@ class BashTool(Tool):
             if use_pgroup:
                 popen_kwargs["start_new_session"] = True  # create new process group
             # Use Popen instead of run() to access PID for process group cleanup on timeout
-            proc = subprocess.Popen(command, **popen_kwargs)
+            try:
+                proc = subprocess.Popen(command, **popen_kwargs)
+            except FileNotFoundError as e:
+                # Handle cases where shell itself or initial command is not found
+                # (though with shell=True, this usually shows up as exit code 127 in stdout/stderr)
+                return f"Error: Command execution failed. Program not found: {e}. If this is a required tool, please install it first."
+            except Exception as e:
+                return f"Error: Failed to start process: {e}"
+
             try:
                 stdout, stderr = proc.communicate(timeout=timeout_s)
             except subprocess.TimeoutExpired:
@@ -6801,7 +6809,7 @@ class Agent:
                     print(f"{C.DIM}[debug] RAG query failed: {e}{C.RESET}", file=sys.stderr)
         self.session.add_user_message(user_input)
         self._interrupted.clear()
-        _recent_tool_calls = []  # track recent calls for loop detection
+        _recent_tool_calls = []  # track recent calls for loop detection (re-aligned name)
         _empty_retries = 0     # cap empty response retries
         _start_time = time.time()
 
@@ -6989,23 +6997,42 @@ class Agent:
 
                 # 5. Detect infinite tool call loops
                 def _norm_args(raw):
-                    """Normalize JSON args so whitespace/key-order variations don't evade loop detection."""
+                    """Normalize JSON args so whitespace/key-order/path variations don't evade loop detection."""
                     try:
-                        return json.dumps(json.loads(raw), sort_keys=True) if isinstance(raw, str) else str(raw)
+                        obj = json.loads(raw) if isinstance(raw, str) else raw
+                        if not isinstance(obj, dict): return str(obj)
+                        # Normalize common path arguments if they are strings
+                        for k in ("file_path", "path", "command"):
+                            if k in obj and isinstance(obj[k], str):
+                                # If it looks like a path or contains a path, normalize but don't resolve missing
+                                try:
+                                    if os.path.isabs(obj[k]):
+                                        obj[k] = os.path.normpath(obj[k])
+                                    else:
+                                        obj[k] = os.path.normpath(os.path.join(os.getcwd(), obj[k]))
+                                except (OSError, ValueError): pass
+                        return json.dumps(obj, sort_keys=True)
                     except (json.JSONDecodeError, TypeError, ValueError):
                         return str(raw)
+
                 current_calls = [(tc.get("function", {}).get("name", ""),
                                   _norm_args(tc.get("function", {}).get("arguments", "")))
                                  for tc in tool_calls]
                 _recent_tool_calls.append(current_calls)
+                
+                # Check for direct repetition of exactly the same tool+args
                 if len(_recent_tool_calls) >= self.MAX_SAME_TOOL_REPEAT:
                     recent = _recent_tool_calls[-self.MAX_SAME_TOOL_REPEAT:]
                     if all(r == recent[0] for r in recent):
                         _p(f"\n{C.YELLOW}The AI got stuck repeating the same action. Stopped.{C.RESET}")
-                        _p(f"{C.DIM}Try rephrasing your request or asking for a different approach.{C.RESET}")
+                        _p(f"{C.DIM}Possible cause: The tool is failing and the AI is retrying it.{C.RESET}")
                         break
-                if len(_recent_tool_calls) > 10:
-                    _recent_tool_calls = _recent_tool_calls[-10:]
+                
+                # Check for recurring failures in history (if any tool result was an error)
+                # (This is handled after execution, so we track it then)
+
+                if len(_recent_tool_calls) > 20:
+                    _recent_tool_calls = _recent_tool_calls[-20:]
 
                 # 6. Execute tool calls
                 # Phase 1: Parse all tool calls
@@ -7071,7 +7098,7 @@ class Agent:
                             continue
                     # Then ask permission
                     if not self.permissions.check(tool_name, tool_params, self.tui):
-                        results.append(ToolResult(tc_id, "Permission denied by user. Do not retry this operation.", True))
+                        results.append(ToolResult(tc_id, "Error: permission denied by user. DO NOT retry this exact command or variations of it in this session unless the user explicitly asks you to try again with different parameters.", True))
                         self.tui.show_tool_result(tool_name, "Permission denied", True)
                         continue
                     validated_calls.append((tc_id, tool_name, tool_params, tool))
