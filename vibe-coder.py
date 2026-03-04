@@ -6499,9 +6499,11 @@ class TUI:
             reply = self._read_permission_input(f"  {_y}? {C.RESET}")
         except (EOFError, KeyboardInterrupt):
             print()
-            return False
+            return "abort"  # Treat Ctrl+C or EOF as full abort
 
         reply_lower = reply.lower()
+        if reply_lower in ("/exit", "/quit", "exit", "quit", "abort", "中止", "終了"):
+            return "abort"
         if reply == "Y" or reply_lower in ("yes-all", "approve-all"):
             return "yes_mode"
         elif reply_lower in ("y", "yes", "はい", "是"):
@@ -6810,6 +6812,7 @@ class Agent:
         self.session.add_user_message(user_input)
         self._interrupted.clear()
         _recent_tool_calls = []  # track recent calls for loop detection (re-aligned name)
+        _consecutive_denies = 0  # track how many times user has denied in this turn
         _empty_retries = 0     # cap empty response retries
         _start_time = time.time()
 
@@ -7097,10 +7100,28 @@ class Agent:
                             self.tui.show_tool_result(tool_name, "Blocked: path validation error", True)
                             continue
                     # Then ask permission
-                    if not self.permissions.check(tool_name, tool_params, self.tui):
+                    perm_result = self.permissions.check(tool_name, tool_params, self.tui)
+                    if perm_result == "abort":
+                        _p(f"\n{C.YELLOW}Task aborted by user.{C.RESET}")
+                        self._interrupted.set()
+                        break
+                    
+                    if not perm_result:
+                        _consecutive_denies += 1
+                        # If the user denies repeatedly, assume they want to stop the current approach
+                        if _consecutive_denies >= 3:
+                            _p(f"\n{C.YELLOW}Multiple tools denied. Stopping current plan.{C.RESET}")
+                            results.append(ToolResult(tc_id, "Error: user has repeatedly denied multiple tool execution attempts. STOP THIS PLAN and ask for instructions or a completely different approach.", True))
+                            self.tui.show_tool_result(tool_name, "Aborted: too many denies", True)
+                            # Stop the loop early to force AI to think
+                            break
+                        
                         results.append(ToolResult(tc_id, "Error: permission denied by user. DO NOT retry this exact command or variations of it in this session unless the user explicitly asks you to try again with different parameters.", True))
                         self.tui.show_tool_result(tool_name, "Permission denied", True)
                         continue
+                    
+                    # If allowed, reset deny counter for this tool use
+                    _consecutive_denies = 0
                     validated_calls.append((tc_id, tool_name, tool_params, tool))
 
                 # Phase 3: Execute — parallel for read-only tools, sequential otherwise
