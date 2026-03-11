@@ -1,5 +1,5 @@
-# 正常に Vision が動くモデルをベースにする
-FROM qwen35-vision:latest
+# Qwen 3.5 (multimodal) をベースにする
+FROM qwen3.5:latest
 
 # Vision 性能を維持しつつ、Tool Use のテンプレートを追加
 # Qwen の正規テンプレートに基づき、メッセージ内のツール呼び出しを処理

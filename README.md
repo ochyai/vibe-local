@@ -81,14 +81,15 @@ vibe-local --model qwen3:8b
 
 | 環境 | メモリ | メインモデル | サイドカー | 備考 |
 |------|--------|-------------|-----------|------|
-| Apple Silicon Mac (M1以降) | 96GB+ | gpt-oss:120b | qwen3-coder:30b | **最速推奨** ~70tok/s |
-| Apple Silicon Mac (M1以降) | 32GB+ | qwen3-coder:30b | qwen3:8b | 推奨 |
-| Apple Silicon Mac (M1以降) | 16GB | qwen3:8b | qwen3:1.7b | 十分実用的 |
-| Apple Silicon Mac (M1以降) | 8GB | qwen3:1.7b | なし | 最低限動作 |
-| Intel Mac | 16GB+ | qwen3:8b | qwen3:1.7b | 動作するが遅め |
-| Windows (ネイティブ) | 16GB+ | qwen3:8b | qwen3:1.7b | NVIDIA GPU推奨 |
-| Windows (WSL2) | 16GB+ | qwen3:8b | qwen3:1.7b | NVIDIA GPU推奨 |
-| Linux (x86_64/arm64) | 16GB+ | qwen3:8b | qwen3:1.7b | NVIDIA GPU推奨 |
+| Apple Silicon Mac (M1以降) | 96GB+ | gpt-oss:120b | qwen3.5:32b | **最速推奨** ~70tok/s |
+| Apple Silicon Mac (M1以降) | 64GB+ | qwen3.5:32b | qwen3.5:7b | 非常に快適 |
+| Apple Silicon Mac (M1以降) | 32GB+ | qwen3.5:14b | qwen3.5:3b | 推奨 |
+| Apple Silicon Mac (M1以降) | 16GB | qwen3.5:7b | qwen3.5:1.5b | 十分実用的 |
+| Apple Silicon Mac (M1以降) | 8GB | qwen3.5:3b | なし | 最低限動作 |
+| Intel Mac | 16GB+ | qwen3.5:7b | qwen3.5:1.5b | 動作するが遅め |
+| Windows (ネイティブ) | 16GB+ | qwen3.5:7b | qwen3.5:1.5b | NVIDIA GPU推奨 |
+| Windows (WSL2) | 16GB+ | qwen3.5:7b | qwen3.5:1.5b | NVIDIA GPU推奨 |
+| Linux (x86_64/arm64) | 16GB+ | qwen3.5:7b | qwen3.5:1.5b | NVIDIA GPU推奨 |
 
 > サイドカーモデル = 権限チェックや初期化プローブなど軽量タスク用。自動選択されます。
 

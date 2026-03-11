@@ -916,71 +916,82 @@ class Config:
         "deepseek-r1:671b": 131072,
         # Tier A — Expert (128GB+ RAM)
         "llama3.1:405b": 131072,
+        "qwen3.5:235b": 32768,  # Qwen 3.5 Expert
         "qwen3:235b": 32768,
         "deepseek-coder-v2:236b": 131072,
         # Tier B — Advanced (48GB+ RAM)
-        "qwen3-coder-next": 262144,  # 80B MoE (3B active), 256K ctx, coding agent
-        "qwen3-next": 262144,        # 80B MoE (3B active), 256K ctx, general
+        "qwen3.5-coder-next": 262144,
+        "qwen3.5-next": 262144,
+        "qwen3-coder-next": 262144,
+        "qwen3-next": 262144,
         "gpt-oss:120b": 131072,
         "mixtral:8x22b": 65536,
         "command-r-plus": 131072,
         "llama3.3:70b": 131072,
         "qwen2.5:72b": 131072,
         "deepseek-r1:70b": 131072,
+        "qwen3.5:32b": 32768,
         "qwen3:32b": 32768,
         # Tier C — Solid (16GB+ RAM)
+        "qwen3.5-coder:30b": 32768,
         "qwen3-coder:30b": 32768,
         "qwen2.5-coder:32b": 32768,
+        "qwen3.5:14b": 32768,
         "qwen3:14b": 32768,
-        "qwen3:30b": 32768,
         "starcoder2:15b": 16384,
         # Tier D — Lightweight (8GB+ RAM)
+        "qwen3.5:7b": 32768,
         "qwen3:8b": 32768,
         "llama3.1:8b": 8192,
         "codellama:7b": 16384,
         "deepseek-coder:6.7b": 16384,
         # Tier E — Minimal (4GB+ RAM)
+        "qwen3.5:3b": 8192,
+        "qwen3.5:1.5b": 4096,
         "qwen3:4b": 8192,
         "qwen3:1.7b": 4096,
         "llama3.2:3b": 8192,
     }
 
     # Ranked model tiers for auto-detection: (model_name, min_ram_gb, tier_label)
-    # Higher in the list = preferred when available + enough RAM
-    # min_ram_gb = practical minimum for INTERACTIVE use (model + KV cache + OS headroom)
-    #   Rule of thumb: model_file_size * 1.5~2x for comfortable tok/s
-    #   671B models (~404GB) need 768GB+ to avoid swapping and slow generation
-    #   405B models (~243GB) need 512GB+ (borderline on 512GB Mac — user can override)
-    # Coding-focused models are prioritized over general-purpose at same tier
     MODEL_TIERS = [
-        # Tier S — Frontier: best reasoning, needs dedicated server RAM
-        #   Not auto-selected on typical machines — use MODEL= to force
+        # Tier S — Frontier: best reasoning
         ("deepseek-r1:671b",        768, "S"),
         ("deepseek-v3:671b",        768, "S"),
         # Tier A — Expert: excellent coding + reasoning
+        ("qwen3.5:235b",            256, "A"),
         ("qwen3:235b",              256, "A"),
         ("deepseek-coder-v2:236b",  256, "A"),
         ("llama3.1:405b",           512, "A"),
-        # Tier B — Advanced: very strong coding, sweet spot for high-RAM machines
-        ("qwen3-coder-next",         96, "B"),  # MoE 80B (3B active), ~27tok/s, 256K ctx, coding agent
-        ("qwen3-next",               96, "B"),  # MoE 80B (3B active), ~25tok/s, 256K ctx, general
-        ("gpt-oss:120b",             96, "B"),  # MoE 117B (5.1B active), ~70tok/s, 131K ctx
+        # Tier B — Advanced: very strong coding
+        ("qwen3.5-coder-next",       96, "B"),
+        ("qwen3.5-next",             96, "B"),
+        ("qwen3-coder-next",         96, "B"),
+        ("qwen3-next",               96, "B"),
+        ("gpt-oss:120b",             96, "B"),
         ("llama3.3:70b",             96, "B"),
         ("deepseek-r1:70b",          96, "B"),
         ("qwen2.5:72b",              96, "B"),
+        ("qwen3.5:32b",              32, "B"),
+        ("qwen3:32b",                32, "B"),
         ("mixtral:8x22b",           128, "B"),
         ("command-r-plus",           96, "B"),
-        # Tier C — Solid: good balance of speed and quality
+        # Tier C — Solid: good balance
+        ("qwen3.5-coder:30b",        24, "C"),
         ("qwen3-coder:30b",          24, "C"),
         ("qwen2.5-coder:32b",        24, "C"),
-        ("starcoder2:15b",           16, "C"),
+        ("qwen3.5:14b",              16, "C"),
         ("qwen3:14b",                16, "C"),
+        ("starcoder2:15b",           16, "C"),
         # Tier D — Lightweight: fast, decent quality
+        ("qwen3.5:7b",                8, "D"),
         ("qwen3:8b",                  8, "D"),
         ("llama3.1:8b",               8, "D"),
         ("deepseek-coder:6.7b",       8, "D"),
         ("codellama:7b",              8, "D"),
         # Tier E — Minimal: runs on anything
+        ("qwen3.5:3b",                4, "E"),
+        ("qwen3.5:1.5b",              2, "E"),
         ("qwen3:4b",                  4, "E"),
         ("qwen3:1.7b",                2, "E"),
         ("llama3.2:3b",               4, "E"),
@@ -1233,7 +1244,27 @@ def _is_reasoning_model(model_name):
     if not model_name:
         return False
     m = model_name.lower()
-    return any(k in m for k in ["qwen3.5", "r1", "o1", "o3", "thinking", "reasoning", "tooluse"])
+    # Use regex with word boundaries for short names like o1, r1 to avoid false positives (e.g., "photo1")
+    # Also support Qwen 3.5 explicitly as per Issue #19
+    patterns = [
+        r"\br1\b", r"\bo1\b", r"\bo3\b", r"qwen3\.5",
+        r"thinking", r"reasoning", r"tooluse"
+    ]
+    return any(re.search(p, m) for p in patterns)
+
+
+class _SilentTUI:
+    """A minimal TUI class for parsing responses without printing to the real terminal.
+    Used for Planner-Actor offloading to extract tool calls from the actor response."""
+    def show_sync_response(self, data, known_tools):
+        choice = data.get("choices", [{}])[0]
+        msg = choice.get("message", {})
+        c = msg.get("content", "") or ""
+        tcs = msg.get("tool_calls", [])
+        if not tcs and c:
+            extracted, _ = _extract_tool_calls_from_text(c, known_tools)
+            if extracted: tcs = extracted
+        return c, tcs
 
 
 def _build_system_prompt(config):
@@ -5037,7 +5068,8 @@ class PermissionMgr:
             print(f"Warning: Could not load permissions: {e}", file=sys.stderr)
 
     def check(self, tool_name, params, tui=None):
-        """Check if tool execution is allowed. Returns True to proceed."""
+        """Check if tool execution is allowed. 
+        Returns True to proceed, False to deny, or None for user abort."""
         # Session-level deny takes priority
         if tool_name in self._session_denies:
             return False
@@ -5049,6 +5081,8 @@ class PermissionMgr:
                 if re.search(pat, cmd, re.IGNORECASE):
                     if tui:
                         result = tui.ask_permission(tool_name, params)
+                        if result == "abort":
+                            return None
                         if result == "yes_mode":
                             self.yes_mode = True
                             return True
@@ -5057,7 +5091,7 @@ class PermissionMgr:
                         if result == "deny_all":
                             self._session_denies.add(tool_name)
                             return False
-                        return result
+                        return bool(result)
                     return False
         if self.yes_mode:
             return True
@@ -5083,6 +5117,8 @@ class PermissionMgr:
         # Ask user (network tools shown with extra context)
         if tui:
             result = tui.ask_permission(tool_name, params)
+            if result == "abort":
+                return None
             if result == "yes_mode":
                 self.yes_mode = True
                 return True
@@ -5092,7 +5128,7 @@ class PermissionMgr:
             if result == "deny_all":
                 self._session_denies.add(tool_name)
                 return False
-            return result
+            return bool(result)
         return False  # Default deny when no TUI (safety)
 
     def session_allow(self, tool_name):
@@ -6827,6 +6863,9 @@ class Agent:
         _esc_monitor.start()
 
         for iteration in range(self.MAX_ITERATIONS):
+            if _consecutive_denies >= 3:
+                _p(f"\n{C.YELLOW}Too many consecutive tool denials. Stopping this turn.{C.RESET}")
+                break
             if self._interrupted.is_set() or _esc_monitor.pressed:
                 if _esc_monitor.pressed:
                     _p(f"\n{C.YELLOW}Stopped (ESC pressed).{C.RESET}")
@@ -6905,11 +6944,14 @@ class Agent:
                 # If we have a tooluse model and no tool calls were generated,
                 # but the model clearly expressed intent to act, offload to the tooluse model.
                 if not tool_calls and self.config.tooluse_model and _is_reasoning_model(self.config.model):
-                    # Strict heuristic: only act if there's intent, but NOT if it's a summary of success
-                    is_summary = any(kw in text for kw in ["正常に", "完了", "成功", "できました", "作成しました", "済み", "報告"])
+                    # Structural detection: check for tool-like tags or structures that weren't parsed,
+                    # or clear "action" verbs if it's following a reasoning block.
+                    has_tags = any(t in text for t in ["<tool_call>", "<invoke>", "<call", "<execute"])
+                    has_think = "<think>" in text or "</think>" in text
                     needs_action = any(kw in text.lower() or kw in text for kw in ["Write", "Edit", "Bash", "実行", "作成", "呼び出"])
+                    is_summary = any(kw in text for kw in ["正常に", "完了", "成功", "できました", "作成しました", "済み", "報告", "ありがとうございました"])
                     
-                    if needs_action and not is_summary:
+                    if (has_tags or (has_think and needs_action)) and not is_summary:
                         if self.config.debug:
                             print(f"{C.DIM}[debug] Offloading to tooluse model: {self.config.tooluse_model}{C.RESET}", file=sys.stderr)
                         
@@ -6917,7 +6959,6 @@ class Agent:
                         
                         # Use a focused history for the tooluse model to avoid confusion from past turns
                         hist = self.session.get_messages()
-                        # System prompt + original user message + planner's reasoning
                         actor_messages = [hist[0]] + hist[-2:] + [
                             {"role": "user", "content": "命令：Plannerの計画を遂行するために、直ちに適切なツールを呼び出してください。JSONのみを出力し、説明は一切禁止します。"}
                         ]
@@ -6931,18 +6972,7 @@ class Agent:
                                 stream=False
                             )
                             
-                            class SilentTUI:
-                                def show_sync_response(self, data, known_tools):
-                                    choice = data.get("choices", [{}])[0]
-                                    msg = choice.get("message", {})
-                                    c = msg.get("content", "") or ""
-                                    tcs = msg.get("tool_calls", [])
-                                    if not tcs and c:
-                                        extracted, _ = _extract_tool_calls_from_text(c, known_tools)
-                                        if extracted: tcs = extracted
-                                    return c, tcs
-                            
-                            text_actor, tool_calls_actor = SilentTUI().show_sync_response(
+                            text_actor, tool_calls_actor = _SilentTUI().show_sync_response(
                                 actor_resp, known_tools=self.registry.names()
                             )
                             
@@ -6999,6 +7029,8 @@ class Agent:
                     break
 
                 # 5. Detect infinite tool call loops
+                _turn_cwd = os.getcwd()  # Cache CWD for loop detection performance
+
                 def _norm_args(raw):
                     """Normalize JSON args so whitespace/key-order/path variations don't evade loop detection."""
                     try:
@@ -7007,12 +7039,11 @@ class Agent:
                         # Normalize common path arguments if they are strings
                         for k in ("file_path", "path", "command"):
                             if k in obj and isinstance(obj[k], str):
-                                # If it looks like a path or contains a path, normalize but don't resolve missing
                                 try:
                                     if os.path.isabs(obj[k]):
                                         obj[k] = os.path.normpath(obj[k])
                                     else:
-                                        obj[k] = os.path.normpath(os.path.join(os.getcwd(), obj[k]))
+                                        obj[k] = os.path.normpath(os.path.join(_turn_cwd, obj[k]))
                                 except (OSError, ValueError): pass
                         return json.dumps(obj, sort_keys=True)
                     except (json.JSONDecodeError, TypeError, ValueError):
@@ -7101,13 +7132,14 @@ class Agent:
                             continue
                     # Then ask permission
                     perm_result = self.permissions.check(tool_name, tool_params, self.tui)
-                    if perm_result == "abort":
+                    if perm_result is None:
                         _p(f"\n{C.YELLOW}Task aborted by user.{C.RESET}")
                         self._interrupted.set()
                         break
                     
                     if not perm_result:
                         # If the user denies once, assume they want to stop the current approach
+                        _consecutive_denies += 1
                         _p(f"\n{C.YELLOW}Tool execution denied. Stopping current approach.{C.RESET}")
                         results.append(ToolResult(tc_id, "Error: user has denied tool execution. STOP this approach, do not retry variations of this command, and ask for instructions or a completely different approach.", True))
                         self.tui.show_tool_result(tool_name, "Denied by user", True)
