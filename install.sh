@@ -682,19 +682,19 @@ if [ -n "$MANUAL_MODEL" ]; then
     vapor_info "$(msg manual_model): $MODEL"
 elif [ "$RAM_GB" -ge 32 ]; then
     MODEL="qwen3-coder:30b"
-    SIDECAR_MODEL="qwen3:8b"
+    SIDECAR_MODEL="qwen3.5:9b"
     echo -e "  ${NEON_GREEN}┃${NC} 🏆 ${BOLD}${YELLOW}★★★ ＢＥＳＴ  ＭＯＤＥＬ ★★★${NC}"
     echo -e "  ${NEON_GREEN}┃${NC}    ${BOLD}${WHITE}$MODEL${NC} ${DIM}(19GB, MoE 3.3B active, $(msg model_best))${NC}"
-    echo -e "  ${NEON_GREEN}┃${NC}    ${DIM}+ sidecar: ${SIDECAR_MODEL} (5GB, fast helper)${NC}"
+    echo -e "  ${NEON_GREEN}┃${NC}    ${DIM}+ sidecar: ${SIDECAR_MODEL} (6.6GB, fast helper)${NC}"
 elif [ "$RAM_GB" -ge 16 ]; then
-    MODEL="qwen3:8b"
-    SIDECAR_MODEL="qwen3:1.7b"
+    MODEL="qwen3.5:9b"
+    SIDECAR_MODEL="qwen3.5:2b"
     echo -e "  ${MINT}┃${NC} ⭐ ${BOLD}${CYAN}★★ ＧＲＥＡＴ  ＭＯＤＥＬ ★★${NC}"
-    echo -e "  ${MINT}┃${NC}    ${BOLD}${WHITE}$MODEL${NC} ${DIM}(5GB, $(msg model_great))${NC}"
-    echo -e "  ${MINT}┃${NC}    ${DIM}+ sidecar: ${SIDECAR_MODEL} (1.1GB, fast helper)${NC}"
+    echo -e "  ${MINT}┃${NC}    ${BOLD}${WHITE}$MODEL${NC} ${DIM}(6.6GB, Hybrid GDN+MoE 256K ctx, $(msg model_great))${NC}"
+    echo -e "  ${MINT}┃${NC}    ${DIM}+ sidecar: ${SIDECAR_MODEL} (2.7GB, fast helper)${NC}"
 elif [ "$RAM_GB" -ge 8 ]; then
-    MODEL="qwen3:1.7b"
-    vapor_warn "$MODEL (1.1GB, $(msg model_min))"
+    MODEL="qwen3.5:2b"
+    vapor_warn "$MODEL (2.7GB, $(msg model_min))"
     vapor_warn "$(msg model_recommend)"
 else
     vapor_error "$(msg mem_lack): ${RAM_GB}GB ($(msg mem_lack_min))"
