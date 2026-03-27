@@ -1243,14 +1243,10 @@ def _is_reasoning_model(model_name):
     """Detect if the model is a reasoning/thinking model (Qwen 3.5, R1, o1, etc.)"""
     if not model_name:
         return False
-    m = model_name.lower()
-    # Use regex with word boundaries for short names like o1, r1 to avoid false positives (e.g., "photo1")
-    # Also support Qwen 3.5 explicitly as per Issue #19
-    patterns = [
-        r"\br1\b", r"\bo1\b", r"\bo3\b", r"qwen3\.5",
-        r"thinking", r"reasoning", r"tooluse"
-    ]
-    return any(re.search(p, m) for p in patterns)
+    # Use word boundaries and structural patterns to avoid false positives.
+    # qwen3.5, deepseek-r1, o1, o3, thinking/reasoning models.
+    pattern = r"(?:^|[:/])(?:qwen3\.5|deepseek-r1|o[13](?:-|$)|thinking|reasoning)"
+    return bool(re.search(pattern, model_name.lower()))
 
 
 class _SilentTUI:
@@ -5167,9 +5163,8 @@ def _extract_tool_calls_from_text(text, known_tools=None):
     stripped = re.sub(r'`[^`]+`', '', stripped)
     search_text = stripped
 
-    # Issue #4 (ReDoS protection): Quick bail-out — if no XML-like closing tags
-    # at all, skip the expensive regex patterns entirely.
-    if '</' not in search_text:
+    # Quick bail-out if no possible tool call markers
+    if '</' not in search_text and '{' not in search_text:
         return [], text.strip()
 
     # Pattern 1: <invoke name="ToolName"><parameter name="p">v</parameter></invoke>
@@ -5262,6 +5257,54 @@ def _extract_tool_calls_from_text(text, known_tools=None):
                     },
                 })
                 remaining_text = remaining_text.replace(m.group(0), "")
+
+    # Pattern 4: Raw JSON objects (Issue #17: Support nested JSON and raw JSON)
+    if '{' in search_text:
+        # Heuristic: find anything that looks like a JSON object containing a tool name
+        # We look for objects that have a "name" field matching one of our known tools.
+        # This handles cases where models output raw JSON tool calls.
+        # Use balanced braces approach to support nested objects (Issue #17)
+        potential_json = []
+        stack = []
+        for i, char in enumerate(search_text):
+            if char == '{':
+                stack.append(i)
+            elif char == '}' and stack:
+                start = stack.pop()
+                if not stack: # Top-level object
+                    potential_json.append(search_text[start:i+1])
+
+        for candidate in potential_json:
+            try:
+                # Basic validation: must contain a known tool name as a value for "name" or "function"
+                data = json.loads(candidate)
+                if not isinstance(data, dict): continue
+                
+                name = None
+                args = {}
+                
+                # Standard OpenAI-like format: {"name": "...", "arguments": {...}}
+                if "name" in data and "arguments" in data:
+                    name = data["name"]
+                    args = data["arguments"]
+                # Nested function format: {"function": {"name": "...", "arguments": {...}}}
+                elif "function" in data and isinstance(data["function"], dict):
+                    func = data["function"]
+                    name = func.get("name")
+                    args = func.get("arguments", {})
+                
+                if name and isinstance(name, str) and (not known_tools or name.strip() in known_tools):
+                    tool_calls.append({
+                        "id": f"call_{uuid.uuid4().hex}",
+                        "type": "function",
+                        "function": {
+                            "name": name.strip(),
+                            "arguments": json.dumps(args, ensure_ascii=False) if isinstance(args, (dict, list)) else str(args),
+                        },
+                    })
+                    remaining_text = remaining_text.replace(candidate, "")
+            except (json.JSONDecodeError, ValueError):
+                continue
 
     # Issue #8: Consolidate wrapper tag cleanup at the end after all patterns.
     # Clean function_calls, action, and tool_call wrapper tags in one place.
@@ -6218,9 +6261,9 @@ class TUI:
         if not header_printed:
             self._scroll_print(f"\n{C.BBLUE}assistant{C.RESET}: ", end="", flush=True)
 
-        full_text = "".join(raw_parts)
+        full_text_unstripped = "".join(raw_parts)
         # Strip <think>...</think> from final text for history
-        full_text = re.sub(r'<think>[\s\S]*?</think>', '', full_text).strip()
+        full_text = re.sub(r'<think>[\s\S]*?</think>', '', full_text_unstripped).strip()
         self._scroll_print()  # newline
 
         # Build tool_calls list from accumulated deltas
@@ -6237,13 +6280,14 @@ class TUI:
                     },
                 })
 
-        # Fallback: check for XML tool calls in text (Qwen models sometimes
-        # emit tool calls as raw XML instead of structured tool_calls)
-        if not streamed_tool_calls and full_text and known_tools:
-            extracted, cleaned = _extract_tool_calls_from_text(full_text, known_tools)
+        # Fallback: check for XML/JSON tool calls in text
+        if not streamed_tool_calls and full_text_unstripped and known_tools:
+            # We use unstripped text to support extraction from within reasoning blocks (Issue #17)
+            extracted, cleaned = _extract_tool_calls_from_text(full_text_unstripped, known_tools)
             if extracted:
                 streamed_tool_calls = extracted
-                full_text = cleaned
+                # If extraction was successful, re-strip <think> from the cleaned text
+                full_text = re.sub(r'<think>[\s\S]*?</think>', '', cleaned).strip()
 
         return full_text, streamed_tool_calls
 
@@ -6251,18 +6295,20 @@ class TUI:
         """Display a sync (non-streaming) response. Returns (text, tool_calls)."""
         choice = data.get("choices", [{}])[0]
         message = choice.get("message", {})
-        content = message.get("content", "") or ""
+        content_unstripped = message.get("content", "") or ""
         tool_calls = message.get("tool_calls", [])
 
         # Strip <think>...</think> blocks (Qwen reasoning traces)
-        content = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
+        content = re.sub(r'<think>[\s\S]*?</think>', '', content_unstripped).strip()
 
-        # Check for XML tool calls in text
-        if not tool_calls and content and known_tools:
-            extracted, cleaned = _extract_tool_calls_from_text(content, known_tools)
+        # Check for XML/JSON tool calls in text
+        if not tool_calls and content_unstripped and known_tools:
+            # Use unstripped text to support extraction from reasoning blocks
+            extracted, cleaned = _extract_tool_calls_from_text(content_unstripped, known_tools)
             if extracted:
                 tool_calls = extracted
-                content = cleaned
+                # Re-strip <think> from the cleaned text
+                content = re.sub(r'<think>[\s\S]*?</think>', '', cleaned).strip()
 
         # Display text
         if content.strip():
@@ -6945,23 +6991,43 @@ class Agent:
                 # but the model clearly expressed intent to act, offload to the tooluse model.
                 if not tool_calls and self.config.tooluse_model and _is_reasoning_model(self.config.model):
                     # Structural detection: check for tool-like tags or structures that weren't parsed,
-                    # or clear "action" verbs if it's following a reasoning block.
+                    # or clear action intent in the reasoning response (</think>).
                     has_tags = any(t in text for t in ["<tool_call>", "<invoke>", "<call", "<execute"])
-                    has_think = "<think>" in text or "</think>" in text
-                    needs_action = any(kw in text.lower() or kw in text for kw in ["Write", "Edit", "Bash", "実行", "作成", "呼び出"])
-                    is_summary = any(kw in text for kw in ["正常に", "完了", "成功", "できました", "作成しました", "済み", "報告", "ありがとうございました"])
+                    has_json = '{"name":' in text or '"function":' in text or '"tool_calls":' in text
+                    has_think_complete = "</think>" in text
                     
-                    if (has_tags or (has_think and needs_action)) and not is_summary:
+                    # Avoid offloading if it's just a summary or conversational response
+                    is_summary = any(kw in text for kw in ["正常に", "完了", "成功", "済み", "報告", "ありがとうございました"])
+                    
+                    if (has_tags or has_json or has_think_complete) and not is_summary:
                         if self.config.debug:
                             print(f"{C.DIM}[debug] Offloading to tooluse model: {self.config.tooluse_model}{C.RESET}", file=sys.stderr)
                         
                         self.tui.start_spinner(f"Acting ({self.config.tooluse_model})")
                         
-                        # Use a focused history for the tooluse model to avoid confusion from past turns
+                        # Use a focused system prompt for the actor to avoid confusion.
+                        # We must include platform/cwd info so the actor can use correct paths.
+                        actor_system = (
+                            f"You are a tool-use specialist. Your ONLY job is to convert the planner's intent into structured tool calls.\n"
+                            f"Working directory: {self.config.cwd}\n"
+                            f"Platform: {platform.system().lower()}\n"
+                            "Output JSON tool calls ONLY. No explanation."
+                        )
+                        actor_messages = [{"role": "system", "content": actor_system}]
+                        
                         hist = self.session.get_messages()
-                        actor_messages = [hist[0]] + hist[-2:] + [
-                            {"role": "user", "content": "命令：Plannerの計画を遂行するために、直ちに適切なツールを呼び出してください。JSONのみを出力し、説明は一切禁止します。"}
-                        ]
+                        # Add last user message and the reasoning response (Planner's response)
+                        # skip system prompt at hist[0]
+                        messages_only = hist[1:]
+                        if len(messages_only) >= 2:
+                            actor_messages.extend(messages_only[-2:])
+                        else:
+                            actor_messages.extend(messages_only)
+                        
+                        actor_messages.append({
+                            "role": "user",
+                            "content": "命令：Plannerの計画を遂行するために、直ちに適切なツールを呼び出してください。JSONのみを出力し、説明は一切禁止します。"
+                        })
                         
                         try:
                             # Non-streaming for speed/simplicity in offload
