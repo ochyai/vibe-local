@@ -959,39 +959,30 @@ class Config:
         ("deepseek-r1:671b",        768, "S"),
         ("deepseek-v3:671b",        768, "S"),
         # Tier A — Expert: excellent coding + reasoning
-        ("qwen3.5:235b",            256, "A"),
         ("qwen3:235b",              256, "A"),
         ("deepseek-coder-v2:236b",  256, "A"),
         ("llama3.1:405b",           512, "A"),
         # Tier B — Advanced: very strong coding
-        ("qwen3.5-coder-next",       96, "B"),
-        ("qwen3.5-next",             96, "B"),
         ("qwen3-coder-next",         96, "B"),
         ("qwen3-next",               96, "B"),
         ("gpt-oss:120b",             96, "B"),
         ("llama3.3:70b",             96, "B"),
         ("deepseek-r1:70b",          96, "B"),
         ("qwen2.5:72b",              96, "B"),
-        ("qwen3.5:32b",              32, "B"),
         ("qwen3:32b",                32, "B"),
         ("mixtral:8x22b",           128, "B"),
         ("command-r-plus",           96, "B"),
         # Tier C — Solid: good balance
-        ("qwen3.5-coder:30b",        24, "C"),
         ("qwen3-coder:30b",          24, "C"),
         ("qwen2.5-coder:32b",        24, "C"),
-        ("qwen3.5:14b",              16, "C"),
         ("qwen3:14b",                16, "C"),
         ("starcoder2:15b",           16, "C"),
         # Tier D — Lightweight: fast, decent quality
-        ("qwen3.5:7b",                8, "D"),
         ("qwen3:8b",                  8, "D"),
         ("llama3.1:8b",               8, "D"),
         ("deepseek-coder:6.7b",       8, "D"),
         ("codellama:7b",              8, "D"),
         # Tier E — Minimal: runs on anything
-        ("qwen3.5:3b",                4, "E"),
-        ("qwen3.5:1.5b",              2, "E"),
         ("qwen3:4b",                  4, "E"),
         ("qwen3:1.7b",                2, "E"),
         ("llama3.2:3b",               4, "E"),
@@ -5149,22 +5140,19 @@ def _try_parse_json_value(value):
 
 
 def _extract_tool_calls_from_text(text, known_tools=None):
-    """Parse XML-style tool calls from text content.
-    Qwen models sometimes emit XML instead of using function calling.
+    """Parse XML-style or raw JSON tool calls from text content.
     Returns (tool_calls_list, cleaned_text)."""
     tool_calls = []
     remaining_text = text
 
-    # Strip code blocks to avoid extracting tool calls from examples
-    # Use non-greedy with length cap to prevent ReDoS on malformed input
-    stripped = re.sub(r'```[^`]{0,50000}```', '', text, flags=re.DOTALL)
-    # Also strip inline backtick code to prevent prompt injection via file content
-    # (Issue #5: verified — both code-block and inline-code stripping are working)
-    stripped = re.sub(r'`[^`]+`', '', stripped)
-    search_text = stripped
+    # Strip code blocks for XML patterns ONLY, but keep them for Pattern 4 (JSON).
+    # This is because XML tool calls are usually outside blocks, 
+    # while raw JSON tool calls often appear inside ```json ... ``` blocks.
+    stripped_for_xml = re.sub(r'```[^`]{0,50000}```', '', text, flags=re.DOTALL)
+    stripped_for_xml = re.sub(r'`[^`]+`', '', stripped_for_xml)
 
     # Quick bail-out if no possible tool call markers
-    if '</' not in search_text and '{' not in search_text:
+    if '</' not in text and '{' not in text:
         return [], text.strip()
 
     # Pattern 1: <invoke name="ToolName"><parameter name="p">v</parameter></invoke>
@@ -5173,21 +5161,16 @@ def _extract_tool_calls_from_text(text, known_tools=None):
     param_pat = re.compile(
         r'<parameter\s+name=\"([^\"]+)\">(.*?)</parameter>', re.DOTALL)
 
-    for m in invoke_pat.finditer(search_text):
-        # Issue #3: strip whitespace from tool names
+    for m in invoke_pat.finditer(stripped_for_xml):
         tool_name = m.group(1).strip()
-        # Early filter: skip tool names not in known set (defense-in-depth)
         if known_tools and tool_name not in known_tools:
             continue
         params_text = m.group(2)
         params = {}
         for pm in param_pat.finditer(params_text):
-            # Issue #1: decode XML entities in parameter values
             raw_val = html_module.unescape(pm.group(2).strip())
-            # Issue #9: auto-parse JSON values
             params[pm.group(1).strip()] = _try_parse_json_value(raw_val)
         tool_calls.append({
-            # Issue #2: use full uuid4 hex (32 chars) to avoid collision
             "id": f"call_{uuid.uuid4().hex}",
             "type": "function",
             "function": {
@@ -5195,32 +5178,23 @@ def _extract_tool_calls_from_text(text, known_tools=None):
                 "arguments": json.dumps(params, ensure_ascii=False),
             },
         })
-        # Issue #6: We use m.group(0) which was matched against search_text
-        # (code-block-stripped version). This is intentional — we want to remove
-        # ALL instances of that exact XML string from the original text, even if
-        # the positions differ between search_text and remaining_text.
         remaining_text = remaining_text.replace(m.group(0), "")
 
     # Pattern 2: Qwen format: <function=ToolName><parameter=param>value</parameter></function>
     qwen_func_pat = re.compile(r'<function=([^>]+)>(.*?)</function>', re.DOTALL)
     qwen_param_pat = re.compile(r'<parameter=([^>]+)>(.*?)</parameter>', re.DOTALL)
 
-    for m in qwen_func_pat.finditer(search_text):
-        # Issue #3: strip whitespace from tool names
+    for m in qwen_func_pat.finditer(stripped_for_xml):
         tool_name = m.group(1).strip()
-        # Early filter: skip tool names not in known set (defense-in-depth)
         if known_tools and tool_name not in known_tools:
             continue
         params_text = m.group(2)
         params = {}
         for pm in qwen_param_pat.finditer(params_text):
-            # Issue #1: decode XML entities in parameter values
             raw_val = html_module.unescape(pm.group(2).strip())
-            # Issue #9: auto-parse JSON values
             params[pm.group(1).strip()] = _try_parse_json_value(raw_val)
         if params:
             tool_calls.append({
-                # Issue #2: use full uuid4 hex (32 chars)
                 "id": f"call_{uuid.uuid4().hex}",
                 "type": "function",
                 "function": {
@@ -5231,24 +5205,19 @@ def _extract_tool_calls_from_text(text, known_tools=None):
             remaining_text = remaining_text.replace(m.group(0), "")
 
     # Pattern 3: <ToolName><param>val</param></ToolName>
-    # (Issue #7: All 3 patterns run without early returns; dedup handles overlaps.)
     if known_tools:
         names_re = "|".join(re.escape(t) for t in known_tools)
         simple_pat = re.compile(r"<(%s)>(.*?)</\1>" % names_re, re.DOTALL)
         inner_pat = re.compile(r"<([a-zA-Z_]\w*)>(.*?)</\1>", re.DOTALL)
-        for m in simple_pat.finditer(search_text):
-            # Issue #3: strip whitespace from tool names
+        for m in simple_pat.finditer(stripped_for_xml):
             tool_name = m.group(1).strip()
             inner = m.group(2)
             params = {}
             for pm in inner_pat.finditer(inner):
-                # Issue #1: decode XML entities in parameter values
                 raw_val = html_module.unescape(pm.group(2).strip())
-                # Issue #9: auto-parse JSON values
                 params[pm.group(1).strip()] = _try_parse_json_value(raw_val)
             if params:
                 tool_calls.append({
-                    # Issue #2: use full uuid4 hex (32 chars)
                     "id": f"call_{uuid.uuid4().hex}",
                     "type": "function",
                     "function": {
@@ -5259,24 +5228,27 @@ def _extract_tool_calls_from_text(text, known_tools=None):
                 remaining_text = remaining_text.replace(m.group(0), "")
 
     # Pattern 4: Raw JSON objects (Issue #17: Support nested JSON and raw JSON)
-    if '{' in search_text:
+    # IMPORTANT: Use the FULL text here because JSON tool calls are often inside code blocks.
+    if '{' in text:
         # Heuristic: find anything that looks like a JSON object containing a tool name
-        # We look for objects that have a "name" field matching one of our known tools.
-        # This handles cases where models output raw JSON tool calls.
         # Use balanced braces approach to support nested objects (Issue #17)
         potential_json = []
         stack = []
-        for i, char in enumerate(search_text):
+        # Search in the original text to include content from code blocks
+        for i, char in enumerate(text):
             if char == '{':
                 stack.append(i)
             elif char == '}' and stack:
                 start = stack.pop()
-                if not stack: # Top-level object
-                    potential_json.append(search_text[start:i+1])
+                if not stack: # Top-level object candidate
+                    candidate = text[start:i+1]
+                    # Performance: quick check if candidate likely contains tool info
+                    if '"name"' in candidate or '"function"' in candidate:
+                        potential_json.append(candidate)
 
         for candidate in potential_json:
             try:
-                # Basic validation: must contain a known tool name as a value for "name" or "function"
+                # Basic validation: must contain a known tool name
                 data = json.loads(candidate)
                 if not isinstance(data, dict): continue
                 
@@ -5302,17 +5274,18 @@ def _extract_tool_calls_from_text(text, known_tools=None):
                             "arguments": json.dumps(args, ensure_ascii=False) if isinstance(args, (dict, list)) else str(args),
                         },
                     })
+                    # Remove the JSON candidate from remaining text
                     remaining_text = remaining_text.replace(candidate, "")
+                    # Also try to remove surrounding code blocks if present
+                    remaining_text = re.sub(r'```[a-z]*\s*\n?\s*' + re.escape(candidate) + r'\s*\n?\s*```', '', remaining_text)
             except (json.JSONDecodeError, ValueError):
                 continue
 
-    # Issue #8: Consolidate wrapper tag cleanup at the end after all patterns.
-    # Clean function_calls, action, and tool_call wrapper tags in one place.
-    for tag in ["function_calls", "action", "tool_call"]:
+    # Issue #8: Consolidate wrapper tag cleanup
+    for tag in ["function_calls", "action", "tool_call", "tool_calls"]:
         remaining_text = re.sub(r"</?%s[^>]*>" % re.escape(tag), "", remaining_text)
 
-    # Deduplicate tool calls that may have been matched by multiple patterns
-    # Normalize JSON arguments so different key orderings are treated as equal
+    # Deduplicate and filter by known_tools
     seen = set()
     deduped = []
     for tc in tool_calls:
