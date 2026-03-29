@@ -10287,3 +10287,38 @@ class TestPermissionInputHandling:
                 with mock.patch.object(vc.TUI, "_read_permission_input", return_value=inp):
                     result = tui.ask_permission("Bash", {"command": "ls"})
                     assert result == "allow_all", f"Input '{inp}' should return 'allow_all'"
+
+    # ════════════════════════════════════════════════════════════════════════════════
+    # PR #17 / Issue #19: New Reasoning Model & Permission Logic Tests
+    # ════════════════════════════════════════════════════════════════════════════════
+
+    def test_is_reasoning_model_regex_boundaries(self):
+        """Verify reasoning model detection uses proper word boundaries (PR #17 fix)."""
+        # Should match
+        assert vc._is_reasoning_model("qwen3.5:32b") is True
+        assert vc._is_reasoning_model("deepseek-r1:7b") is True
+        assert vc._is_reasoning_model("o1-mini") is True
+        assert vc._is_reasoning_model("o3-preview") is True
+        assert vc._is_reasoning_model("thinking-model") is True
+        
+        # Should NOT match (False Positives prevented by regex boundaries)
+        assert vc._is_reasoning_model("photo1") is False
+        assert vc._is_reasoning_model("error1") is False
+        assert vc._is_reasoning_model("proto3") is False
+        assert vc._is_reasoning_model("solo1") is False
+
+    def test_permission_mgr_check_returns_none_on_abort(self):
+        """PermissionMgr.check should return None when user selects 'abort' (PR #17 fix)."""
+        config = mock.MagicMock()
+        config.yes_mode = False
+        config.permissions_file = "non_existent.json"
+        
+        mgr = vc.PermissionMgr(config)
+        tui = mock.MagicMock()
+        
+        # Mock ask_permission to return "abort"
+        tui.ask_permission.return_value = "abort"
+        
+        # Check should return None (the new behavior)
+        result = mgr.check("Bash", {"command": "ls"}, tui)
+        assert result is None, "Should return None on user abort"

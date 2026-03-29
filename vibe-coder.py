@@ -704,6 +704,7 @@ class Config:
         self.ollama_host = self.DEFAULT_OLLAMA_HOST
         self.model = self.DEFAULT_MODEL
         self.sidecar_model = self.DEFAULT_SIDECAR
+        self.tooluse_model = ""       # Model for offloading tool execution
         self.max_tokens = self.DEFAULT_MAX_TOKENS
         self.temperature = self.DEFAULT_TEMPERATURE
         self.context_window = self.DEFAULT_CONTEXT_WINDOW
@@ -784,6 +785,8 @@ class Config:
                         self.model = val
                     elif key == "SIDECAR_MODEL" and val:
                         self.sidecar_model = val
+                    elif key == "TOOLUSE_MODEL" and val:
+                        self.tooluse_model = val
                     elif key == "OLLAMA_HOST" and val:
                         self.ollama_host = val
                     elif key == "MAX_TOKENS" and val:
@@ -816,6 +819,8 @@ class Config:
             self.sidecar_model = os.environ["VIBE_CODER_SIDECAR"]
         if os.environ.get("VIBE_LOCAL_SIDECAR_MODEL"):
             self.sidecar_model = os.environ["VIBE_LOCAL_SIDECAR_MODEL"]
+        if os.environ.get("VIBE_LOCAL_TOOLUSE_MODEL"):
+            self.tooluse_model = os.environ["VIBE_LOCAL_TOOLUSE_MODEL"]
         if os.environ.get("VIBE_CODER_DEBUG") == "1" or os.environ.get("VIBE_LOCAL_DEBUG") == "1":
             self.debug = True
 
@@ -911,65 +916,67 @@ class Config:
         "deepseek-r1:671b": 131072,
         # Tier A — Expert (128GB+ RAM)
         "llama3.1:405b": 131072,
+        "qwen3.5:235b": 32768,  # Qwen 3.5 Expert
         "qwen3:235b": 32768,
         "deepseek-coder-v2:236b": 131072,
         # Tier B — Advanced (48GB+ RAM)
-        "qwen3-coder-next": 262144,  # 80B MoE (3B active), 256K ctx, coding agent
-        "qwen3-next": 262144,        # 80B MoE (3B active), 256K ctx, general
+        "qwen3.5-coder-next": 262144,
+        "qwen3.5-next": 262144,
+        "qwen3-coder-next": 262144,
+        "qwen3-next": 262144,
         "gpt-oss:120b": 131072,
         "mixtral:8x22b": 65536,
         "command-r-plus": 131072,
         "llama3.3:70b": 131072,
         "qwen2.5:72b": 131072,
         "deepseek-r1:70b": 131072,
+        "qwen3.5:32b": 32768,
         "qwen3:32b": 32768,
         # Tier C — Solid (16GB+ RAM)
+        "qwen3.5-coder:30b": 32768,
         "qwen3-coder:30b": 32768,
         "qwen2.5-coder:32b": 32768,
+        "qwen3.5:14b": 32768,
         "qwen3:14b": 32768,
-        "qwen3:30b": 32768,
         "starcoder2:15b": 16384,
         # Tier D — Lightweight (8GB+ RAM)
+        "qwen3.5:7b": 32768,
         "qwen3:8b": 32768,
         "llama3.1:8b": 8192,
         "codellama:7b": 16384,
         "deepseek-coder:6.7b": 16384,
         # Tier E — Minimal (4GB+ RAM)
+        "qwen3.5:3b": 8192,
+        "qwen3.5:1.5b": 4096,
         "qwen3:4b": 8192,
         "qwen3:1.7b": 4096,
         "llama3.2:3b": 8192,
     }
 
     # Ranked model tiers for auto-detection: (model_name, min_ram_gb, tier_label)
-    # Higher in the list = preferred when available + enough RAM
-    # min_ram_gb = practical minimum for INTERACTIVE use (model + KV cache + OS headroom)
-    #   Rule of thumb: model_file_size * 1.5~2x for comfortable tok/s
-    #   671B models (~404GB) need 768GB+ to avoid swapping and slow generation
-    #   405B models (~243GB) need 512GB+ (borderline on 512GB Mac — user can override)
-    # Coding-focused models are prioritized over general-purpose at same tier
     MODEL_TIERS = [
-        # Tier S — Frontier: best reasoning, needs dedicated server RAM
-        #   Not auto-selected on typical machines — use MODEL= to force
+        # Tier S — Frontier: best reasoning
         ("deepseek-r1:671b",        768, "S"),
         ("deepseek-v3:671b",        768, "S"),
         # Tier A — Expert: excellent coding + reasoning
         ("qwen3:235b",              256, "A"),
         ("deepseek-coder-v2:236b",  256, "A"),
         ("llama3.1:405b",           512, "A"),
-        # Tier B — Advanced: very strong coding, sweet spot for high-RAM machines
-        ("qwen3-coder-next",         96, "B"),  # MoE 80B (3B active), ~27tok/s, 256K ctx, coding agent
-        ("qwen3-next",               96, "B"),  # MoE 80B (3B active), ~25tok/s, 256K ctx, general
-        ("gpt-oss:120b",             96, "B"),  # MoE 117B (5.1B active), ~70tok/s, 131K ctx
+        # Tier B — Advanced: very strong coding
+        ("qwen3-coder-next",         96, "B"),
+        ("qwen3-next",               96, "B"),
+        ("gpt-oss:120b",             96, "B"),
         ("llama3.3:70b",             96, "B"),
         ("deepseek-r1:70b",          96, "B"),
         ("qwen2.5:72b",              96, "B"),
+        ("qwen3:32b",                32, "B"),
         ("mixtral:8x22b",           128, "B"),
         ("command-r-plus",           96, "B"),
-        # Tier C — Solid: good balance of speed and quality
+        # Tier C — Solid: good balance
         ("qwen3-coder:30b",          24, "C"),
         ("qwen2.5-coder:32b",        24, "C"),
-        ("starcoder2:15b",           16, "C"),
         ("qwen3:14b",                16, "C"),
+        ("starcoder2:15b",           16, "C"),
         # Tier D — Lightweight: fast, decent quality
         ("qwen3:8b",                  8, "D"),
         ("llama3.1:8b",               8, "D"),
@@ -1223,6 +1230,30 @@ def _get_vram_gb():
 # System Prompt
 # ════════════════════════════════════════════════════════════════════════════════
 
+def _is_reasoning_model(model_name):
+    """Detect if the model is a reasoning/thinking model (Qwen 3.5, R1, o1, etc.)"""
+    if not model_name:
+        return False
+    # Use word boundaries and structural patterns to avoid false positives.
+    # qwen3.5, deepseek-r1, o1, o3, thinking/reasoning models.
+    pattern = r"(?:^|[:/])(?:qwen3\.5|deepseek-r1|o[13](?:-|$)|thinking|reasoning)"
+    return bool(re.search(pattern, model_name.lower()))
+
+
+class _SilentTUI:
+    """A minimal TUI class for parsing responses without printing to the real terminal.
+    Used for Planner-Actor offloading to extract tool calls from the actor response."""
+    def show_sync_response(self, data, known_tools):
+        choice = data.get("choices", [{}])[0]
+        msg = choice.get("message", {})
+        c = msg.get("content", "") or ""
+        tcs = msg.get("tool_calls", [])
+        if not tcs and c:
+            extracted, _ = _extract_tool_calls_from_text(c, known_tools)
+            if extracted: tcs = extracted
+        return c, tcs
+
+
 def _build_system_prompt(config):
     """Build system prompt with environment info and OS-specific hints."""
     cwd = config.cwd
@@ -1230,8 +1261,18 @@ def _build_system_prompt(config):
     shell = os.environ.get("SHELL", "unknown")
     os_ver = platform.platform()
 
-    prompt = """You are a helpful coding assistant. You EXECUTE tasks using tools and explain results clearly.
-IMPORTANT: Never output <think> or </think> tags in your responses. Use the function calling API exclusively — do not emit <tool_call> XML blocks.
+    # Reasoning model adjustment: allow <think> tags for models that need them
+    is_reasoning = _is_reasoning_model(config.model)
+    if is_reasoning:
+        think_rule = (
+            "あなたは思考型モデルです。まず <think> タグ内で日本語で思考し、その後に必ずツールを呼び出してください。\n"
+            "ツール呼び出しには標準の function calling API を使用してください。"
+        )
+    else:
+        think_rule = "IMPORTANT: Never output <think> or </think> tags in your responses. Use the function calling API exclusively."
+
+    prompt = f"""You are a helpful coding assistant. You EXECUTE tasks using tools and explain results clearly.
+{think_rule}
 
 CORE RULES:
 1. TOOL FIRST. Call a tool immediately — no explanation before the tool call.
@@ -2433,7 +2474,15 @@ class BashTool(Tool):
             if use_pgroup:
                 popen_kwargs["start_new_session"] = True  # create new process group
             # Use Popen instead of run() to access PID for process group cleanup on timeout
-            proc = subprocess.Popen(command, **popen_kwargs)
+            try:
+                proc = subprocess.Popen(command, **popen_kwargs)
+            except FileNotFoundError as e:
+                # Handle cases where shell itself or initial command is not found
+                # (though with shell=True, this usually shows up as exit code 127 in stdout/stderr)
+                return f"Error: Command execution failed. Program not found: {e}. If this is a required tool, please install it first."
+            except Exception as e:
+                return f"Error: Failed to start process: {e}"
+
             try:
                 stdout, stderr = proc.communicate(timeout=timeout_s)
             except subprocess.TimeoutExpired:
@@ -5006,7 +5055,8 @@ class PermissionMgr:
             print(f"Warning: Could not load permissions: {e}", file=sys.stderr)
 
     def check(self, tool_name, params, tui=None):
-        """Check if tool execution is allowed. Returns True to proceed."""
+        """Check if tool execution is allowed. 
+        Returns True to proceed, False to deny, or None for user abort."""
         # Session-level deny takes priority
         if tool_name in self._session_denies:
             return False
@@ -5018,6 +5068,8 @@ class PermissionMgr:
                 if re.search(pat, cmd, re.IGNORECASE):
                     if tui:
                         result = tui.ask_permission(tool_name, params)
+                        if result == "abort":
+                            return None
                         if result == "yes_mode":
                             self.yes_mode = True
                             return True
@@ -5026,7 +5078,7 @@ class PermissionMgr:
                         if result == "deny_all":
                             self._session_denies.add(tool_name)
                             return False
-                        return result
+                        return bool(result)
                     return False
         if self.yes_mode:
             return True
@@ -5052,6 +5104,8 @@ class PermissionMgr:
         # Ask user (network tools shown with extra context)
         if tui:
             result = tui.ask_permission(tool_name, params)
+            if result == "abort":
+                return None
             if result == "yes_mode":
                 self.yes_mode = True
                 return True
@@ -5061,7 +5115,7 @@ class PermissionMgr:
             if result == "deny_all":
                 self._session_denies.add(tool_name)
                 return False
-            return result
+            return bool(result)
         return False  # Default deny when no TUI (safety)
 
     def session_allow(self, tool_name):
@@ -5086,23 +5140,19 @@ def _try_parse_json_value(value):
 
 
 def _extract_tool_calls_from_text(text, known_tools=None):
-    """Parse XML-style tool calls from text content.
-    Qwen models sometimes emit XML instead of using function calling.
+    """Parse XML-style or raw JSON tool calls from text content.
     Returns (tool_calls_list, cleaned_text)."""
     tool_calls = []
     remaining_text = text
 
-    # Strip code blocks to avoid extracting tool calls from examples
-    # Use non-greedy with length cap to prevent ReDoS on malformed input
-    stripped = re.sub(r'```[^`]{0,50000}```', '', text, flags=re.DOTALL)
-    # Also strip inline backtick code to prevent prompt injection via file content
-    # (Issue #5: verified — both code-block and inline-code stripping are working)
-    stripped = re.sub(r'`[^`]+`', '', stripped)
-    search_text = stripped
+    # Strip code blocks for XML patterns ONLY, but keep them for Pattern 4 (JSON).
+    # This is because XML tool calls are usually outside blocks, 
+    # while raw JSON tool calls often appear inside ```json ... ``` blocks.
+    stripped_for_xml = re.sub(r'```[^`]{0,50000}```', '', text, flags=re.DOTALL)
+    stripped_for_xml = re.sub(r'`[^`]+`', '', stripped_for_xml)
 
-    # Issue #4 (ReDoS protection): Quick bail-out — if no XML-like closing tags
-    # at all, skip the expensive regex patterns entirely.
-    if '</' not in search_text:
+    # Quick bail-out if no possible tool call markers
+    if '</' not in text and '{' not in text:
         return [], text.strip()
 
     # Pattern 1: <invoke name="ToolName"><parameter name="p">v</parameter></invoke>
@@ -5111,21 +5161,16 @@ def _extract_tool_calls_from_text(text, known_tools=None):
     param_pat = re.compile(
         r'<parameter\s+name=\"([^\"]+)\">(.*?)</parameter>', re.DOTALL)
 
-    for m in invoke_pat.finditer(search_text):
-        # Issue #3: strip whitespace from tool names
+    for m in invoke_pat.finditer(stripped_for_xml):
         tool_name = m.group(1).strip()
-        # Early filter: skip tool names not in known set (defense-in-depth)
         if known_tools and tool_name not in known_tools:
             continue
         params_text = m.group(2)
         params = {}
         for pm in param_pat.finditer(params_text):
-            # Issue #1: decode XML entities in parameter values
             raw_val = html_module.unescape(pm.group(2).strip())
-            # Issue #9: auto-parse JSON values
             params[pm.group(1).strip()] = _try_parse_json_value(raw_val)
         tool_calls.append({
-            # Issue #2: use full uuid4 hex (32 chars) to avoid collision
             "id": f"call_{uuid.uuid4().hex}",
             "type": "function",
             "function": {
@@ -5133,32 +5178,23 @@ def _extract_tool_calls_from_text(text, known_tools=None):
                 "arguments": json.dumps(params, ensure_ascii=False),
             },
         })
-        # Issue #6: We use m.group(0) which was matched against search_text
-        # (code-block-stripped version). This is intentional — we want to remove
-        # ALL instances of that exact XML string from the original text, even if
-        # the positions differ between search_text and remaining_text.
         remaining_text = remaining_text.replace(m.group(0), "")
 
     # Pattern 2: Qwen format: <function=ToolName><parameter=param>value</parameter></function>
     qwen_func_pat = re.compile(r'<function=([^>]+)>(.*?)</function>', re.DOTALL)
     qwen_param_pat = re.compile(r'<parameter=([^>]+)>(.*?)</parameter>', re.DOTALL)
 
-    for m in qwen_func_pat.finditer(search_text):
-        # Issue #3: strip whitespace from tool names
+    for m in qwen_func_pat.finditer(stripped_for_xml):
         tool_name = m.group(1).strip()
-        # Early filter: skip tool names not in known set (defense-in-depth)
         if known_tools and tool_name not in known_tools:
             continue
         params_text = m.group(2)
         params = {}
         for pm in qwen_param_pat.finditer(params_text):
-            # Issue #1: decode XML entities in parameter values
             raw_val = html_module.unescape(pm.group(2).strip())
-            # Issue #9: auto-parse JSON values
             params[pm.group(1).strip()] = _try_parse_json_value(raw_val)
         if params:
             tool_calls.append({
-                # Issue #2: use full uuid4 hex (32 chars)
                 "id": f"call_{uuid.uuid4().hex}",
                 "type": "function",
                 "function": {
@@ -5169,24 +5205,19 @@ def _extract_tool_calls_from_text(text, known_tools=None):
             remaining_text = remaining_text.replace(m.group(0), "")
 
     # Pattern 3: <ToolName><param>val</param></ToolName>
-    # (Issue #7: All 3 patterns run without early returns; dedup handles overlaps.)
     if known_tools:
         names_re = "|".join(re.escape(t) for t in known_tools)
         simple_pat = re.compile(r"<(%s)>(.*?)</\1>" % names_re, re.DOTALL)
         inner_pat = re.compile(r"<([a-zA-Z_]\w*)>(.*?)</\1>", re.DOTALL)
-        for m in simple_pat.finditer(search_text):
-            # Issue #3: strip whitespace from tool names
+        for m in simple_pat.finditer(stripped_for_xml):
             tool_name = m.group(1).strip()
             inner = m.group(2)
             params = {}
             for pm in inner_pat.finditer(inner):
-                # Issue #1: decode XML entities in parameter values
                 raw_val = html_module.unescape(pm.group(2).strip())
-                # Issue #9: auto-parse JSON values
                 params[pm.group(1).strip()] = _try_parse_json_value(raw_val)
             if params:
                 tool_calls.append({
-                    # Issue #2: use full uuid4 hex (32 chars)
                     "id": f"call_{uuid.uuid4().hex}",
                     "type": "function",
                     "function": {
@@ -5196,13 +5227,65 @@ def _extract_tool_calls_from_text(text, known_tools=None):
                 })
                 remaining_text = remaining_text.replace(m.group(0), "")
 
-    # Issue #8: Consolidate wrapper tag cleanup at the end after all patterns.
-    # Clean function_calls, action, and tool_call wrapper tags in one place.
-    for tag in ["function_calls", "action", "tool_call"]:
+    # Pattern 4: Raw JSON objects (Issue #17: Support nested JSON and raw JSON)
+    # IMPORTANT: Use the FULL text here because JSON tool calls are often inside code blocks.
+    if '{' in text:
+        # Heuristic: find anything that looks like a JSON object containing a tool name
+        # Use balanced braces approach to support nested objects (Issue #17)
+        potential_json = []
+        stack = []
+        # Search in the original text to include content from code blocks
+        for i, char in enumerate(text):
+            if char == '{':
+                stack.append(i)
+            elif char == '}' and stack:
+                start = stack.pop()
+                if not stack: # Top-level object candidate
+                    candidate = text[start:i+1]
+                    # Performance: quick check if candidate likely contains tool info
+                    if '"name"' in candidate or '"function"' in candidate:
+                        potential_json.append(candidate)
+
+        for candidate in potential_json:
+            try:
+                # Basic validation: must contain a known tool name
+                data = json.loads(candidate)
+                if not isinstance(data, dict): continue
+                
+                name = None
+                args = {}
+                
+                # Standard OpenAI-like format: {"name": "...", "arguments": {...}}
+                if "name" in data and "arguments" in data:
+                    name = data["name"]
+                    args = data["arguments"]
+                # Nested function format: {"function": {"name": "...", "arguments": {...}}}
+                elif "function" in data and isinstance(data["function"], dict):
+                    func = data["function"]
+                    name = func.get("name")
+                    args = func.get("arguments", {})
+                
+                if name and isinstance(name, str) and (not known_tools or name.strip() in known_tools):
+                    tool_calls.append({
+                        "id": f"call_{uuid.uuid4().hex}",
+                        "type": "function",
+                        "function": {
+                            "name": name.strip(),
+                            "arguments": json.dumps(args, ensure_ascii=False) if isinstance(args, (dict, list)) else str(args),
+                        },
+                    })
+                    # Remove the JSON candidate from remaining text
+                    remaining_text = remaining_text.replace(candidate, "")
+                    # Also try to remove surrounding code blocks if present
+                    remaining_text = re.sub(r'```[a-z]*\s*\n?\s*' + re.escape(candidate) + r'\s*\n?\s*```', '', remaining_text)
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+    # Issue #8: Consolidate wrapper tag cleanup
+    for tag in ["function_calls", "action", "tool_call", "tool_calls"]:
         remaining_text = re.sub(r"</?%s[^>]*>" % re.escape(tag), "", remaining_text)
 
-    # Deduplicate tool calls that may have been matched by multiple patterns
-    # Normalize JSON arguments so different key orderings are treated as equal
+    # Deduplicate and filter by known_tools
     seen = set()
     deduped = []
     for tc in tool_calls:
@@ -6151,9 +6234,9 @@ class TUI:
         if not header_printed:
             self._scroll_print(f"\n{C.BBLUE}assistant{C.RESET}: ", end="", flush=True)
 
-        full_text = "".join(raw_parts)
+        full_text_unstripped = "".join(raw_parts)
         # Strip <think>...</think> from final text for history
-        full_text = re.sub(r'<think>[\s\S]*?</think>', '', full_text).strip()
+        full_text = re.sub(r'<think>[\s\S]*?</think>', '', full_text_unstripped).strip()
         self._scroll_print()  # newline
 
         # Build tool_calls list from accumulated deltas
@@ -6170,13 +6253,14 @@ class TUI:
                     },
                 })
 
-        # Fallback: check for XML tool calls in text (Qwen models sometimes
-        # emit tool calls as raw XML instead of structured tool_calls)
-        if not streamed_tool_calls and full_text and known_tools:
-            extracted, cleaned = _extract_tool_calls_from_text(full_text, known_tools)
+        # Fallback: check for XML/JSON tool calls in text
+        if not streamed_tool_calls and full_text_unstripped and known_tools:
+            # We use unstripped text to support extraction from within reasoning blocks (Issue #17)
+            extracted, cleaned = _extract_tool_calls_from_text(full_text_unstripped, known_tools)
             if extracted:
                 streamed_tool_calls = extracted
-                full_text = cleaned
+                # If extraction was successful, re-strip <think> from the cleaned text
+                full_text = re.sub(r'<think>[\s\S]*?</think>', '', cleaned).strip()
 
         return full_text, streamed_tool_calls
 
@@ -6184,18 +6268,20 @@ class TUI:
         """Display a sync (non-streaming) response. Returns (text, tool_calls)."""
         choice = data.get("choices", [{}])[0]
         message = choice.get("message", {})
-        content = message.get("content", "") or ""
+        content_unstripped = message.get("content", "") or ""
         tool_calls = message.get("tool_calls", [])
 
         # Strip <think>...</think> blocks (Qwen reasoning traces)
-        content = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
+        content = re.sub(r'<think>[\s\S]*?</think>', '', content_unstripped).strip()
 
-        # Check for XML tool calls in text
-        if not tool_calls and content and known_tools:
-            extracted, cleaned = _extract_tool_calls_from_text(content, known_tools)
+        # Check for XML/JSON tool calls in text
+        if not tool_calls and content_unstripped and known_tools:
+            # Use unstripped text to support extraction from reasoning blocks
+            extracted, cleaned = _extract_tool_calls_from_text(content_unstripped, known_tools)
             if extracted:
                 tool_calls = extracted
-                content = cleaned
+                # Re-strip <think> from the cleaned text
+                content = re.sub(r'<think>[\s\S]*?</think>', '', cleaned).strip()
 
         # Display text
         if content.strip():
@@ -6468,9 +6554,11 @@ class TUI:
             reply = self._read_permission_input(f"  {_y}? {C.RESET}")
         except (EOFError, KeyboardInterrupt):
             print()
-            return False
+            return "abort"  # Treat Ctrl+C or EOF as full abort
 
         reply_lower = reply.lower()
+        if reply_lower in ("/exit", "/quit", "exit", "quit", "abort", "中止", "終了"):
+            return "abort"
         if reply == "Y" or reply_lower in ("yes-all", "approve-all"):
             return "yes_mode"
         elif reply_lower in ("y", "yes", "はい", "是"):
@@ -6778,7 +6866,8 @@ class Agent:
                     print(f"{C.DIM}[debug] RAG query failed: {e}{C.RESET}", file=sys.stderr)
         self.session.add_user_message(user_input)
         self._interrupted.clear()
-        _recent_tool_calls = []  # track recent calls for loop detection
+        _recent_tool_calls = []  # track recent calls for loop detection (re-aligned name)
+        _consecutive_denies = 0  # track how many times user has denied in this turn
         _empty_retries = 0     # cap empty response retries
         _start_time = time.time()
 
@@ -6793,6 +6882,9 @@ class Agent:
         _esc_monitor.start()
 
         for iteration in range(self.MAX_ITERATIONS):
+            if _consecutive_denies >= 3:
+                _p(f"\n{C.YELLOW}Too many consecutive tool denials. Stopping this turn.{C.RESET}")
+                break
             if self._interrupted.is_set() or _esc_monitor.pressed:
                 if _esc_monitor.pressed:
                     _p(f"\n{C.YELLOW}Stopped (ESC pressed).{C.RESET}")
@@ -6867,6 +6959,78 @@ class Agent:
                         if hasattr(response, 'close'):
                             response.close()
 
+                # --- Tooluse Offloading ---
+                # If we have a tooluse model and no tool calls were generated,
+                # but the model clearly expressed intent to act, offload to the tooluse model.
+                if not tool_calls and self.config.tooluse_model and _is_reasoning_model(self.config.model):
+                    # Structural detection: check for tool-like tags or structures that weren't parsed,
+                    # or clear action intent in the reasoning response (</think>).
+                    has_tags = any(t in text for t in ["<tool_call>", "<invoke>", "<call", "<execute"])
+                    has_json = '{"name":' in text or '"function":' in text or '"tool_calls":' in text
+                    has_think_complete = "</think>" in text
+                    
+                    # Avoid offloading if it's just a summary or conversational response
+                    is_summary = any(kw in text for kw in ["正常に", "完了", "成功", "済み", "報告", "ありがとうございました"])
+                    
+                    if (has_tags or has_json or has_think_complete) and not is_summary:
+                        if self.config.debug:
+                            print(f"{C.DIM}[debug] Offloading to tooluse model: {self.config.tooluse_model}{C.RESET}", file=sys.stderr)
+                        
+                        self.tui.start_spinner(f"Acting ({self.config.tooluse_model})")
+                        
+                        # Use a focused system prompt for the actor to avoid confusion.
+                        # We must include platform/cwd info so the actor can use correct paths.
+                        actor_system = (
+                            f"You are a tool-use specialist. Your ONLY job is to convert the planner's intent into structured tool calls.\n"
+                            f"Working directory: {self.config.cwd}\n"
+                            f"Platform: {platform.system().lower()}\n"
+                            "Output JSON tool calls ONLY. No explanation."
+                        )
+                        actor_messages = [{"role": "system", "content": actor_system}]
+                        
+                        hist = self.session.get_messages()
+                        # Add last user message and the reasoning response (Planner's response)
+                        # skip system prompt at hist[0]
+                        messages_only = hist[1:]
+                        if len(messages_only) >= 2:
+                            actor_messages.extend(messages_only[-2:])
+                        else:
+                            actor_messages.extend(messages_only)
+                        
+                        actor_messages.append({
+                            "role": "user",
+                            "content": "命令：Plannerの計画を遂行するために、直ちに適切なツールを呼び出してください。JSONのみを出力し、説明は一切禁止します。"
+                        })
+                        
+                        try:
+                            # Non-streaming for speed/simplicity in offload
+                            actor_resp = self.client.chat(
+                                model=self.config.tooluse_model,
+                                messages=actor_messages,
+                                tools=tools if tools else None,
+                                stream=False
+                            )
+                            
+                            text_actor, tool_calls_actor = _SilentTUI().show_sync_response(
+                                actor_resp, known_tools=self.registry.names()
+                            )
+                            
+                            if self.config.debug:
+                                print(f"{C.DIM}[debug] Tooluse model response: {repr(text_actor)}{C.RESET}", file=sys.stderr)
+
+                            # If tooluse model provided tool calls, use them immediately
+                            if tool_calls_actor:
+                                tool_calls = tool_calls_actor
+                                # Append actor text only if it looks like useful info (not just the JSON)
+                                if text_actor and len(text_actor) > 10 and not text_actor.strip().startswith('{'):
+                                    text += "\n" + text_actor
+                        except Exception as e:
+                            if self.config.debug:
+                                print(f"{C.RED}[debug] Tooluse offload failed: {e}{C.RESET}", file=sys.stderr)
+                        finally:
+                            self.tui.stop_spinner()
+                # --- END Tooluse Offloading ---
+
                 # Reconcile token estimate with actual usage from API
                 # Skip reconciliation right after compaction to avoid drift
                 if isinstance(response, dict) and not self.session._just_compacted:
@@ -6904,24 +7068,44 @@ class Agent:
                     break
 
                 # 5. Detect infinite tool call loops
+                _turn_cwd = os.getcwd()  # Cache CWD for loop detection performance
+
                 def _norm_args(raw):
-                    """Normalize JSON args so whitespace/key-order variations don't evade loop detection."""
+                    """Normalize JSON args so whitespace/key-order/path variations don't evade loop detection."""
                     try:
-                        return json.dumps(json.loads(raw), sort_keys=True) if isinstance(raw, str) else str(raw)
+                        obj = json.loads(raw) if isinstance(raw, str) else raw
+                        if not isinstance(obj, dict): return str(obj)
+                        # Normalize common path arguments if they are strings
+                        for k in ("file_path", "path", "command"):
+                            if k in obj and isinstance(obj[k], str):
+                                try:
+                                    if os.path.isabs(obj[k]):
+                                        obj[k] = os.path.normpath(obj[k])
+                                    else:
+                                        obj[k] = os.path.normpath(os.path.join(_turn_cwd, obj[k]))
+                                except (OSError, ValueError): pass
+                        return json.dumps(obj, sort_keys=True)
                     except (json.JSONDecodeError, TypeError, ValueError):
                         return str(raw)
+
                 current_calls = [(tc.get("function", {}).get("name", ""),
                                   _norm_args(tc.get("function", {}).get("arguments", "")))
                                  for tc in tool_calls]
                 _recent_tool_calls.append(current_calls)
+                
+                # Check for direct repetition of exactly the same tool+args
                 if len(_recent_tool_calls) >= self.MAX_SAME_TOOL_REPEAT:
                     recent = _recent_tool_calls[-self.MAX_SAME_TOOL_REPEAT:]
                     if all(r == recent[0] for r in recent):
                         _p(f"\n{C.YELLOW}The AI got stuck repeating the same action. Stopped.{C.RESET}")
-                        _p(f"{C.DIM}Try rephrasing your request or asking for a different approach.{C.RESET}")
+                        _p(f"{C.DIM}Possible cause: The tool is failing and the AI is retrying it.{C.RESET}")
                         break
-                if len(_recent_tool_calls) > 10:
-                    _recent_tool_calls = _recent_tool_calls[-10:]
+                
+                # Check for recurring failures in history (if any tool result was an error)
+                # (This is handled after execution, so we track it then)
+
+                if len(_recent_tool_calls) > 20:
+                    _recent_tool_calls = _recent_tool_calls[-20:]
 
                 # 6. Execute tool calls
                 # Phase 1: Parse all tool calls
@@ -6986,10 +7170,23 @@ class Agent:
                             self.tui.show_tool_result(tool_name, "Blocked: path validation error", True)
                             continue
                     # Then ask permission
-                    if not self.permissions.check(tool_name, tool_params, self.tui):
-                        results.append(ToolResult(tc_id, "Permission denied by user. Do not retry this operation.", True))
-                        self.tui.show_tool_result(tool_name, "Permission denied", True)
-                        continue
+                    perm_result = self.permissions.check(tool_name, tool_params, self.tui)
+                    if perm_result is None:
+                        _p(f"\n{C.YELLOW}Task aborted by user.{C.RESET}")
+                        self._interrupted.set()
+                        break
+                    
+                    if not perm_result:
+                        # If the user denies once, assume they want to stop the current approach
+                        _consecutive_denies += 1
+                        _p(f"\n{C.YELLOW}Tool execution denied. Stopping current approach.{C.RESET}")
+                        results.append(ToolResult(tc_id, "Error: user has denied tool execution. STOP this approach, do not retry variations of this command, and ask for instructions or a completely different approach.", True))
+                        self.tui.show_tool_result(tool_name, "Denied by user", True)
+                        # Stop the loop early to force AI to think/respond to the denial
+                        break
+                    
+                    # If allowed, reset deny counter for this tool use
+                    _consecutive_denies = 0
                     validated_calls.append((tc_id, tool_name, tool_params, tool))
 
                 # Phase 3: Execute — parallel for read-only tools, sequential otherwise
