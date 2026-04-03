@@ -933,6 +933,7 @@ class Config:
         "qwen3:30b": 32768,
         "starcoder2:15b": 16384,
         "qwen3.5:9b": 262144,        # Hybrid GDN+MoE, 256K ctx
+        "qwen3.5:latest": 262144,    # alias for 9b
         # Tier D — Lightweight (8GB+ RAM)
         "qwen3:8b": 32768,
         "llama3.1:8b": 8192,
@@ -979,6 +980,7 @@ class Config:
         ("qwen3-coder:30b",          24, "C"),
         ("qwen2.5-coder:32b",        24, "C"),
         ("qwen3.5:9b",               12, "C"),  # Hybrid GDN+MoE, 256K ctx
+        ("qwen3.5:latest",           12, "C"),  # alias for 9b
         ("starcoder2:15b",           16, "C"),
         ("qwen3:14b",                16, "C"),
         # Tier D — Lightweight: fast, decent quality

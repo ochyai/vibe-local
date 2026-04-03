@@ -1652,8 +1652,8 @@ class TestVramAwareModelSelection:
             with mock.patch.object(vc, '_get_vram_gb', return_value=0):
                 with mock.patch.object(cfg, '_query_installed_models', return_value=[]):
                     cfg._auto_detect_model()
-        # 8GB RAM → small model
-        assert cfg.model == "qwen3:1.7b"
+        # 8GB RAM → small model (qwen3.5:2b replaces qwen3:1.7b as default)
+        assert cfg.model == "qwen3.5:2b"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
