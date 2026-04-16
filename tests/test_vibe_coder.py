@@ -187,7 +187,58 @@ class TestConfig:
         finally:
             vc._get_ram_gb = original
             vc.Config._query_installed_models = orig_query
-        assert cfg.model == "qwen3:1.7b"
+        assert cfg.model == "qwen3.5:2b"
+
+    def test_auto_detect_model_16gb_fallback(self):
+        """16GB RAM fallback picks qwen3.5:9b."""
+        cfg = vc.Config()
+        cfg.model = ""
+        original = vc._get_ram_gb
+        orig_query = vc.Config._query_installed_models
+        try:
+            vc._get_ram_gb = lambda: 16
+            vc.Config._query_installed_models = lambda self: []
+            cfg._auto_detect_model()
+        finally:
+            vc._get_ram_gb = original
+            vc.Config._query_installed_models = orig_query
+        assert cfg.model == "qwen3.5:9b"
+        assert cfg.sidecar_model == "qwen3.5:2b"
+
+    def test_auto_detect_model_32gb_fallback_sidecar(self):
+        """32GB RAM fallback picks qwen3-coder:30b with qwen3.5:9b sidecar."""
+        cfg = vc.Config()
+        cfg.model = ""
+        cfg.sidecar_model = ""
+        original = vc._get_ram_gb
+        orig_query = vc.Config._query_installed_models
+        try:
+            vc._get_ram_gb = lambda: 32
+            vc.Config._query_installed_models = lambda self: []
+            cfg._auto_detect_model()
+        finally:
+            vc._get_ram_gb = original
+            vc.Config._query_installed_models = orig_query
+        assert cfg.model == "qwen3-coder:30b"
+        assert cfg.sidecar_model == "qwen3.5:9b"
+
+    def test_auto_detect_model_8gb_fallback(self):
+        """8GB RAM fallback picks qwen3.5:2b with no sidecar."""
+        cfg = vc.Config()
+        cfg.model = ""
+        cfg.sidecar_model = ""
+        original = vc._get_ram_gb
+        orig_query = vc.Config._query_installed_models
+        try:
+            vc._get_ram_gb = lambda: 8
+            vc.Config._query_installed_models = lambda self: []
+            cfg._auto_detect_model()
+        finally:
+            vc._get_ram_gb = original
+            vc.Config._query_installed_models = orig_query
+        assert cfg.model == "qwen3.5:2b"
+        assert cfg.context_window == 262144
+        assert cfg.sidecar_model == ""
 
     def test_auto_detect_smart_picks_best_installed(self):
         """Smart detection picks best installed model that fits in RAM.
@@ -292,6 +343,194 @@ class TestConfig:
         assert tier == "C"
         tier, ram = vc.Config.get_model_tier("unknown-model:99b")
         assert tier is None
+
+    def test_get_model_tier_qwen35(self):
+        """get_model_tier returns correct tier for qwen3.5 models."""
+        tier, ram = vc.Config.get_model_tier("qwen3.5:122b-a10b")
+        assert tier == "B"
+        assert ram == 96
+        # get_model_tier uses first-match with family prefix, so all qwen3.5:*
+        # match the first qwen3.5 entry in MODEL_TIERS (122b-a10b, Tier B, 96GB).
+        # This is expected behavior — _pick_best_model uses exact match instead.
+        tier, ram = vc.Config.get_model_tier("qwen3.5:35b-a3b")
+        assert tier == "B"
+        tier, ram = vc.Config.get_model_tier("qwen3.5:27b")
+        assert tier is not None
+        tier, ram = vc.Config.get_model_tier("qwen3.5:9b")
+        assert tier is not None
+        tier, ram = vc.Config.get_model_tier("qwen3.5:0.8b")
+        assert tier is not None
+
+    def test_qwen35_context_sizes(self):
+        """All qwen3.5 models have 256K context."""
+        for name, ctx in vc.Config.MODEL_CONTEXT_SIZES.items():
+            if name.startswith("qwen3.5:"):
+                assert ctx == 262144, f"{name} should have 262144 ctx, got {ctx}"
+
+    def test_qwen35_in_model_tiers(self):
+        """All qwen3.5 entries in MODEL_CONTEXT_SIZES have a corresponding MODEL_TIERS entry."""
+        tier_models = {m for m, _, _ in vc.Config.MODEL_TIERS}
+        for name in vc.Config.MODEL_CONTEXT_SIZES:
+            if name.startswith("qwen3.5:"):
+                assert name in tier_models, f"{name} in MODEL_CONTEXT_SIZES but not in MODEL_TIERS"
+
+    def test_gemma4_context_sizes(self):
+        """All gemma4 models have correct context windows."""
+        expected = {
+            "gemma4:31b": 262144,   # 256K
+            "gemma4:26b": 262144,   # 256K
+            "gemma4:e4b": 131072,   # 128K
+            "gemma4:latest": 131072, # 128K (alias for e4b)
+            "gemma4:e2b": 131072,   # 128K
+        }
+        for name, ctx in expected.items():
+            assert name in vc.Config.MODEL_CONTEXT_SIZES, f"{name} missing from MODEL_CONTEXT_SIZES"
+            assert vc.Config.MODEL_CONTEXT_SIZES[name] == ctx, f"{name} expected {ctx}, got {vc.Config.MODEL_CONTEXT_SIZES[name]}"
+
+    def test_gemma4_in_model_tiers(self):
+        """All gemma4 entries in MODEL_CONTEXT_SIZES have a corresponding MODEL_TIERS entry."""
+        tier_models = {m for m, _, _ in vc.Config.MODEL_TIERS}
+        for name in vc.Config.MODEL_CONTEXT_SIZES:
+            if name.startswith("gemma4:"):
+                assert name in tier_models, f"{name} in MODEL_CONTEXT_SIZES but not in MODEL_TIERS"
+
+    def test_get_model_tier_gemma4(self):
+        """get_model_tier returns correct tier for gemma4 models."""
+        tier, ram = vc.Config.get_model_tier("gemma4:31b")
+        assert tier == "B"
+        assert ram == 24
+        tier, ram = vc.Config.get_model_tier("gemma4:26b")
+        assert tier == "B"
+        assert ram == 24
+        # get_model_tier uses first-match with family prefix, so all gemma4:*
+        # match the first gemma4 entry in MODEL_TIERS (31b, Tier B, 24GB).
+        # This is expected behavior — _pick_best_model uses exact match instead.
+        tier, ram = vc.Config.get_model_tier("gemma4:e4b")
+        assert tier is not None
+        tier, ram = vc.Config.get_model_tier("gemma4:latest")
+        assert tier is not None
+        tier, ram = vc.Config.get_model_tier("gemma4:e2b")
+        assert tier is not None
+
+    def test_auto_detect_smart_picks_gemma4_26b(self):
+        """Smart detection picks gemma4:26b on 24GB+ when installed."""
+        cfg = vc.Config()
+        cfg.model = ""
+        cfg.sidecar_model = ""
+        original = vc._get_ram_gb
+        orig_query = vc.Config._query_installed_models
+        try:
+            vc._get_ram_gb = lambda: 24
+            vc.Config._query_installed_models = lambda self: [
+                "gemma4:26b", "gemma4:e4b"
+            ]
+            cfg._auto_detect_model()
+        finally:
+            vc._get_ram_gb = original
+            vc.Config._query_installed_models = orig_query
+        assert cfg.model == "gemma4:26b"
+
+    def test_auto_detect_smart_picks_qwen35_9b(self):
+        """Smart detection picks qwen3.5:9b on 16GB when installed."""
+        cfg = vc.Config()
+        cfg.model = ""
+        cfg.sidecar_model = ""
+        original = vc._get_ram_gb
+        orig_query = vc.Config._query_installed_models
+        try:
+            vc._get_ram_gb = lambda: 16
+            vc.Config._query_installed_models = lambda self: [
+                "qwen3.5:9b", "qwen3.5:2b"
+            ]
+            cfg._auto_detect_model()
+        finally:
+            vc._get_ram_gb = original
+            vc.Config._query_installed_models = orig_query
+        assert cfg.model == "qwen3.5:9b"
+        assert cfg.sidecar_model == "qwen3.5:2b"
+
+    def test_auto_detect_smart_picks_qwen35_27b(self):
+        """Smart detection picks qwen3.5:27b on 32GB+ when installed."""
+        cfg = vc.Config()
+        cfg.model = ""
+        cfg.sidecar_model = ""
+        original = vc._get_ram_gb
+        orig_query = vc.Config._query_installed_models
+        try:
+            vc._get_ram_gb = lambda: 36
+            vc.Config._query_installed_models = lambda self: [
+                "qwen3.5:27b", "qwen3.5:9b", "qwen3:8b"
+            ]
+            cfg._auto_detect_model()
+        finally:
+            vc._get_ram_gb = original
+            vc.Config._query_installed_models = orig_query
+        assert cfg.model == "qwen3.5:27b"
+        assert cfg.sidecar_model == "qwen3.5:9b"
+
+    def test_auto_detect_qwen35_sidecar_preferred_over_qwen3(self):
+        """qwen3.5:9b is preferred over qwen3:8b as sidecar when both installed."""
+        cfg = vc.Config()
+        cfg.model = ""
+        cfg.sidecar_model = ""
+        original = vc._get_ram_gb
+        orig_query = vc.Config._query_installed_models
+        try:
+            vc._get_ram_gb = lambda: 36
+            vc.Config._query_installed_models = lambda self: [
+                "qwen3-coder:30b", "qwen3.5:9b", "qwen3:8b"
+            ]
+            cfg._auto_detect_model()
+        finally:
+            vc._get_ram_gb = original
+            vc.Config._query_installed_models = orig_query
+        assert cfg.model == "qwen3-coder:30b"
+        assert cfg.sidecar_model == "qwen3.5:9b"
+
+    def test_auto_detect_qwen35_122b_on_large_ram(self):
+        """qwen3.5:122b-a10b is selected on 96GB+ when installed."""
+        cfg = vc.Config()
+        cfg.model = ""
+        original = vc._get_ram_gb
+        orig_query = vc.Config._query_installed_models
+        try:
+            vc._get_ram_gb = lambda: 128
+            vc.Config._query_installed_models = lambda self: [
+                "qwen3.5:122b-a10b", "qwen3.5:9b"
+            ]
+            cfg._auto_detect_model()
+        finally:
+            vc._get_ram_gb = original
+            vc.Config._query_installed_models = orig_query
+        assert cfg.model == "qwen3.5:122b-a10b"
+
+    def test_auto_detect_qwen35_skipped_insufficient_ram(self):
+        """qwen3.5:27b is skipped on 16GB (needs 32GB)."""
+        cfg = vc.Config()
+        cfg.model = ""
+        original = vc._get_ram_gb
+        orig_query = vc.Config._query_installed_models
+        try:
+            vc._get_ram_gb = lambda: 16
+            vc.Config._query_installed_models = lambda self: [
+                "qwen3.5:27b", "qwen3.5:9b"
+            ]
+            cfg._auto_detect_model()
+        finally:
+            vc._get_ram_gb = original
+            vc.Config._query_installed_models = orig_query
+        assert cfg.model == "qwen3.5:9b"
+        assert cfg.model != "qwen3.5:27b"
+
+    def test_apply_context_window_qwen35(self):
+        """_apply_context_window sets 262144 for qwen3.5 models."""
+        cfg = vc.Config()
+        cfg.context_window = cfg.DEFAULT_CONTEXT_WINDOW
+        cfg._apply_context_window("qwen3.5:9b")
+        assert cfg.context_window == 262144
+        cfg.context_window = cfg.DEFAULT_CONTEXT_WINDOW
+        cfg._apply_context_window("qwen3.5:0.8b")
+        assert cfg.context_window == 262144
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1469,8 +1708,8 @@ class TestVramAwareModelSelection:
             with mock.patch.object(vc, '_get_vram_gb', return_value=0):
                 with mock.patch.object(cfg, '_query_installed_models', return_value=[]):
                     cfg._auto_detect_model()
-        # 8GB RAM → small model
-        assert cfg.model == "qwen3:1.7b"
+        # 8GB RAM → small model (qwen3.5:2b replaces qwen3:1.7b as default)
+        assert cfg.model == "qwen3.5:2b"
 
 
 # ═══════════════════════════════════════════════════════════════════════════

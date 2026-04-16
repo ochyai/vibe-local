@@ -914,8 +914,12 @@ class Config:
         "qwen3:235b": 32768,
         "deepseek-coder-v2:236b": 131072,
         # Tier B — Advanced (48GB+ RAM)
+        "qwen3.5:122b-a10b": 262144, # MoE (10B active), 256K ctx
         "qwen3-coder-next": 262144,  # 80B MoE (3B active), 256K ctx, coding agent
         "qwen3-next": 262144,        # 80B MoE (3B active), 256K ctx, general
+        "qwen3.5:35b-a3b": 262144,   # MoE (3B active), 256K ctx
+        "gemma4:31b": 262144,        # 30.7B dense, 256K ctx, Vision
+        "gemma4:26b": 262144,        # 25.2B MoE (3.8B active), 256K ctx, Vision
         "gpt-oss:120b": 131072,
         "mixtral:8x22b": 65536,
         "command-r-plus": 131072,
@@ -924,17 +928,26 @@ class Config:
         "deepseek-r1:70b": 131072,
         "qwen3:32b": 32768,
         # Tier C — Solid (16GB+ RAM)
+        "qwen3.5:27b": 262144,       # Dense hybrid, 256K ctx
         "qwen3-coder:30b": 32768,
         "qwen2.5-coder:32b": 32768,
         "qwen3:14b": 32768,
         "qwen3:30b": 32768,
         "starcoder2:15b": 16384,
+        "qwen3.5:9b": 262144,        # Hybrid GDN+MoE, 256K ctx
+        "qwen3.5:latest": 262144,    # alias for 9b
         # Tier D — Lightweight (8GB+ RAM)
+        "gemma4:e4b": 131072,        # 4.5B effective MoE, 128K ctx, Vision/Audio
+        "gemma4:latest": 131072,     # alias for e4b
         "qwen3:8b": 32768,
         "llama3.1:8b": 8192,
         "codellama:7b": 16384,
         "deepseek-coder:6.7b": 16384,
         # Tier E — Minimal (4GB+ RAM)
+        "gemma4:e2b": 131072,        # 2.3B effective MoE, 128K ctx, Vision/Audio
+        "qwen3.5:4b": 262144,        # Hybrid GDN+MoE, 256K ctx
+        "qwen3.5:2b": 262144,        # Hybrid GDN+MoE, 256K ctx
+        "qwen3.5:0.8b": 262144,      # Hybrid GDN+MoE, 256K ctx
         "qwen3:4b": 8192,
         "qwen3:1.7b": 4096,
         "llama3.2:3b": 8192,
@@ -957,8 +970,12 @@ class Config:
         ("deepseek-coder-v2:236b",  256, "A"),
         ("llama3.1:405b",           512, "A"),
         # Tier B — Advanced: very strong coding, sweet spot for high-RAM machines
+        ("qwen3.5:122b-a10b",        96, "B"),  # MoE (10B active), 256K ctx
         ("qwen3-coder-next",         96, "B"),  # MoE 80B (3B active), ~27tok/s, 256K ctx, coding agent
         ("qwen3-next",               96, "B"),  # MoE 80B (3B active), ~25tok/s, 256K ctx, general
+        ("qwen3.5:35b-a3b",          48, "B"),  # MoE (3B active), 256K ctx
+        ("gemma4:31b",               24, "B"),  # 30.7B dense, 256K ctx, Vision
+        ("gemma4:26b",               24, "B"),  # 25.2B MoE (3.8B active), 256K ctx, Vision
         ("gpt-oss:120b",             96, "B"),  # MoE 117B (5.1B active), ~70tok/s, 131K ctx
         ("llama3.3:70b",             96, "B"),
         ("deepseek-r1:70b",          96, "B"),
@@ -966,23 +983,32 @@ class Config:
         ("mixtral:8x22b",           128, "B"),
         ("command-r-plus",           96, "B"),
         # Tier C — Solid: good balance of speed and quality
+        ("qwen3.5:27b",              32, "C"),  # Dense hybrid, 256K ctx
         ("qwen3-coder:30b",          24, "C"),
         ("qwen2.5-coder:32b",        24, "C"),
+        ("qwen3.5:9b",               12, "C"),  # Hybrid GDN+MoE, 256K ctx
+        ("qwen3.5:latest",           12, "C"),  # alias for 9b
         ("starcoder2:15b",           16, "C"),
         ("qwen3:14b",                16, "C"),
         # Tier D — Lightweight: fast, decent quality
+        ("gemma4:e4b",                8, "D"),  # 4.5B effective MoE, 128K ctx, Vision/Audio
+        ("gemma4:latest",             8, "D"),  # alias for e4b
         ("qwen3:8b",                  8, "D"),
         ("llama3.1:8b",               8, "D"),
         ("deepseek-coder:6.7b",       8, "D"),
         ("codellama:7b",              8, "D"),
         # Tier E — Minimal: runs on anything
+        ("gemma4:e2b",                4, "E"),  # 2.3B effective MoE, 128K ctx, Vision/Audio
+        ("qwen3.5:4b",                6, "E"),  # Hybrid GDN+MoE, 256K ctx
         ("qwen3:4b",                  4, "E"),
+        ("qwen3.5:2b",                4, "E"),  # Hybrid GDN+MoE, 256K ctx
         ("qwen3:1.7b",                2, "E"),
+        ("qwen3.5:0.8b",              2, "E"),  # Hybrid GDN+MoE, 256K ctx
         ("llama3.2:3b",               4, "E"),
     ]
 
     # Sidecar candidates (fast + small, used for context compaction)
-    _SIDECAR_CANDIDATES = ["qwen3:8b", "qwen3:4b", "qwen3:1.7b", "llama3.2:3b"]
+    _SIDECAR_CANDIDATES = ["qwen3.5:9b", "qwen3:8b", "qwen3.5:4b", "qwen3:4b", "qwen3.5:2b", "qwen3:1.7b", "llama3.2:3b"]
 
     def _auto_detect_model(self):
         if self.model:
@@ -1008,15 +1034,15 @@ class Config:
         if effective_mem_gb >= 32:
             self.model = "qwen3-coder:30b"
         elif effective_mem_gb >= 16:
-            self.model = "qwen3:8b"
+            self.model = "qwen3.5:9b"
         else:
-            self.model = "qwen3:1.7b"
-            self.context_window = 4096
+            self.model = "qwen3.5:2b"
+            self.context_window = 262144
         if not self.sidecar_model:
             if effective_mem_gb >= 32:
-                self.sidecar_model = "qwen3:8b"
+                self.sidecar_model = "qwen3.5:9b"
             elif effective_mem_gb >= 16:
-                self.sidecar_model = "qwen3:1.7b"
+                self.sidecar_model = "qwen3.5:2b"
 
     def _query_installed_models(self):
         """Query Ollama API for installed model names. Returns list or empty."""
