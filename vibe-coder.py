@@ -918,6 +918,8 @@ class Config:
         "qwen3-coder-next": 262144,  # 80B MoE (3B active), 256K ctx, coding agent
         "qwen3-next": 262144,        # 80B MoE (3B active), 256K ctx, general
         "qwen3.5:35b-a3b": 262144,   # MoE (3B active), 256K ctx
+        "gemma4:31b": 262144,        # 30.7B dense, 256K ctx, Vision
+        "gemma4:26b": 262144,        # 25.2B MoE (3.8B active), 256K ctx, Vision
         "gpt-oss:120b": 131072,
         "mixtral:8x22b": 65536,
         "command-r-plus": 131072,
@@ -935,11 +937,14 @@ class Config:
         "qwen3.5:9b": 262144,        # Hybrid GDN+MoE, 256K ctx
         "qwen3.5:latest": 262144,    # alias for 9b
         # Tier D — Lightweight (8GB+ RAM)
+        "gemma4:e4b": 131072,        # 4.5B effective MoE, 128K ctx, Vision/Audio
+        "gemma4:latest": 131072,     # alias for e4b
         "qwen3:8b": 32768,
         "llama3.1:8b": 8192,
         "codellama:7b": 16384,
         "deepseek-coder:6.7b": 16384,
         # Tier E — Minimal (4GB+ RAM)
+        "gemma4:e2b": 131072,        # 2.3B effective MoE, 128K ctx, Vision/Audio
         "qwen3.5:4b": 262144,        # Hybrid GDN+MoE, 256K ctx
         "qwen3.5:2b": 262144,        # Hybrid GDN+MoE, 256K ctx
         "qwen3.5:0.8b": 262144,      # Hybrid GDN+MoE, 256K ctx
@@ -969,6 +974,8 @@ class Config:
         ("qwen3-coder-next",         96, "B"),  # MoE 80B (3B active), ~27tok/s, 256K ctx, coding agent
         ("qwen3-next",               96, "B"),  # MoE 80B (3B active), ~25tok/s, 256K ctx, general
         ("qwen3.5:35b-a3b",          48, "B"),  # MoE (3B active), 256K ctx
+        ("gemma4:31b",               24, "B"),  # 30.7B dense, 256K ctx, Vision
+        ("gemma4:26b",               24, "B"),  # 25.2B MoE (3.8B active), 256K ctx, Vision
         ("gpt-oss:120b",             96, "B"),  # MoE 117B (5.1B active), ~70tok/s, 131K ctx
         ("llama3.3:70b",             96, "B"),
         ("deepseek-r1:70b",          96, "B"),
@@ -984,11 +991,14 @@ class Config:
         ("starcoder2:15b",           16, "C"),
         ("qwen3:14b",                16, "C"),
         # Tier D — Lightweight: fast, decent quality
+        ("gemma4:e4b",                8, "D"),  # 4.5B effective MoE, 128K ctx, Vision/Audio
+        ("gemma4:latest",             8, "D"),  # alias for e4b
         ("qwen3:8b",                  8, "D"),
         ("llama3.1:8b",               8, "D"),
         ("deepseek-coder:6.7b",       8, "D"),
         ("codellama:7b",              8, "D"),
         # Tier E — Minimal: runs on anything
+        ("gemma4:e2b",                4, "E"),  # 2.3B effective MoE, 128K ctx, Vision/Audio
         ("qwen3.5:4b",                6, "E"),  # Hybrid GDN+MoE, 256K ctx
         ("qwen3:4b",                  4, "E"),
         ("qwen3.5:2b",                4, "E"),  # Hybrid GDN+MoE, 256K ctx

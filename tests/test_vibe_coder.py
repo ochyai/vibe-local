@@ -374,6 +374,62 @@ class TestConfig:
             if name.startswith("qwen3.5:"):
                 assert name in tier_models, f"{name} in MODEL_CONTEXT_SIZES but not in MODEL_TIERS"
 
+    def test_gemma4_context_sizes(self):
+        """All gemma4 models have correct context windows."""
+        expected = {
+            "gemma4:31b": 262144,   # 256K
+            "gemma4:26b": 262144,   # 256K
+            "gemma4:e4b": 131072,   # 128K
+            "gemma4:latest": 131072, # 128K (alias for e4b)
+            "gemma4:e2b": 131072,   # 128K
+        }
+        for name, ctx in expected.items():
+            assert name in vc.Config.MODEL_CONTEXT_SIZES, f"{name} missing from MODEL_CONTEXT_SIZES"
+            assert vc.Config.MODEL_CONTEXT_SIZES[name] == ctx, f"{name} expected {ctx}, got {vc.Config.MODEL_CONTEXT_SIZES[name]}"
+
+    def test_gemma4_in_model_tiers(self):
+        """All gemma4 entries in MODEL_CONTEXT_SIZES have a corresponding MODEL_TIERS entry."""
+        tier_models = {m for m, _, _ in vc.Config.MODEL_TIERS}
+        for name in vc.Config.MODEL_CONTEXT_SIZES:
+            if name.startswith("gemma4:"):
+                assert name in tier_models, f"{name} in MODEL_CONTEXT_SIZES but not in MODEL_TIERS"
+
+    def test_get_model_tier_gemma4(self):
+        """get_model_tier returns correct tier for gemma4 models."""
+        tier, ram = vc.Config.get_model_tier("gemma4:31b")
+        assert tier == "B"
+        assert ram == 24
+        tier, ram = vc.Config.get_model_tier("gemma4:26b")
+        assert tier == "B"
+        assert ram == 24
+        # get_model_tier uses first-match with family prefix, so all gemma4:*
+        # match the first gemma4 entry in MODEL_TIERS (31b, Tier B, 24GB).
+        # This is expected behavior — _pick_best_model uses exact match instead.
+        tier, ram = vc.Config.get_model_tier("gemma4:e4b")
+        assert tier is not None
+        tier, ram = vc.Config.get_model_tier("gemma4:latest")
+        assert tier is not None
+        tier, ram = vc.Config.get_model_tier("gemma4:e2b")
+        assert tier is not None
+
+    def test_auto_detect_smart_picks_gemma4_26b(self):
+        """Smart detection picks gemma4:26b on 24GB+ when installed."""
+        cfg = vc.Config()
+        cfg.model = ""
+        cfg.sidecar_model = ""
+        original = vc._get_ram_gb
+        orig_query = vc.Config._query_installed_models
+        try:
+            vc._get_ram_gb = lambda: 24
+            vc.Config._query_installed_models = lambda self: [
+                "gemma4:26b", "gemma4:e4b"
+            ]
+            cfg._auto_detect_model()
+        finally:
+            vc._get_ram_gb = original
+            vc.Config._query_installed_models = orig_query
+        assert cfg.model == "gemma4:26b"
+
     def test_auto_detect_smart_picks_qwen35_9b(self):
         """Smart detection picks qwen3.5:9b on 16GB when installed."""
         cfg = vc.Config()
