@@ -15,7 +15,7 @@
               ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝
 ```
 
-> 🌴✨ **Free AI Coding Environment** ✨🌴
+> 🌴✨ **Free AI Coding Environment — v2** ✨🌴
 >
 > No network. No cost. Local LLM agent coding.
 
@@ -29,12 +29,33 @@
 
 ---
 
+## 🆕 v2.2 (2026-07)
+
+- **vibe-auto 自動振り分け** — 雑談・短い質問は小型モデルで即答（挨拶 実測30秒→約3秒）、コーディングやツール使用は大型モデルへ。極小パススルールーター (`vibe-router`) が内容を見て振り分ける。`--no-router` で無効化可
+- **thinking暴走の抑制** — 小型モデルがタイトル生成のたびに数十秒「考え込んで」キューを塞ぐ問題を修正（思考オフ注入で 15〜29秒 → 0.2秒）
+- **プロンプト軽量化** — Claude Code用スキル等の外部取り込みを遮断（システムプロンプト 69KB→30KB ≒ 初回応答が約2倍速）
+- **vibe専用UI** — TUIのロゴ・タイトル等の表示を vibe-local 仕様に調整した専用バイナリ (`vibe-tui`) を初回起動時に自動生成（エンジンのアップデートに追従して自動再生成）
+- **黒灰テーマ `vibe-null` が新既定** — 零位相の黒と灰。vaporwave (`vibe-vaporwave`) も `--theme vaporwave` で選択可
+- **サクサク化** — 起動と同時にモデルを裏で先読み（最初の応答までの待ちを大幅短縮）、モデル常駐2時間、起動演出の高速化
+- **`--fast`** — 小型モデルを主役にして軽快に動かすモード
+
+## v2 (2026-07)
+
+- **TUI を [OpenCode](https://opencode.ai) エンジンに刷新** — マルチプロバイダをネイティブサポートするMITライセンスのターミナルAIエージェント。Plan/Buildモード、テーマ、LSP連携
+- **自作プロキシを廃止** — Ollama が Anthropic Messages API をネイティブ実装 (v0.14+) したため、変換レイヤーが不要に。壊れやすい部品が2000行消滅
+- **モデルを2026年世代に更新** — qwen3.6 / gpt-oss / qwen3-coder-next / qwen3.5
+- **コンテキスト長の自動管理** — RAM に応じた `num_ctx` を焼き込んだ別名モデル `vibe-coder` / `vibe-fast` を自動生成（低メモリ機でのメモリ食い潰しを防止）
+- **教室モード（実験的）** — 先生のMac 1台でモデルを動かし、生徒はattachするだけ
+- **`--classic`** — 従来どおり Claude Code CLI をUIに使うモードも残存（プロキシなしで直結）
+
+---
+
 ## 🇯🇵 日本語 | [🌱 やさしい日本語](#-やさしい-にほんご) | [🇺🇸 English](#-english) | [🇨🇳 中文](#-中文)
 
 ### これは何？
 
 MacにコマンドをコピペするだけでAIがコードを書いてくれる環境。
-ネットワーク不要・完全無料。Ollama + ローカルLLM で Claude Code のインターフェースをそのまま使える。
+ネットワーク不要・完全無料。Ollama + ローカルLLM + OpenCode TUI。
 
 ### インストール (3ステップ)
 
@@ -61,22 +82,44 @@ vibe-local
 # ワンショット（1回だけ質問）
 vibe-local -p "Pythonでじゃんけんゲーム作って"
 
-# ネットワーク自動判定（ネットがあればClaude API、なければローカル）
+# ネットワーク自動判定（ネットがあればClaude Code、なければローカル）
 vibe-local --auto
 
+# サクサク優先（小型モデルを主役に）
+vibe-local --fast
+
 # モデルを手動指定
-vibe-local --model qwen3:8b
+vibe-local --model devstral
+
+# テーマ切替（null=黒灰・既定 / vaporwave）
+vibe-local --theme vaporwave
+
+# Claude Code のUIで使いたい場合（互換モード）
+vibe-local --classic
+
+# 教室モード: 先生のMacでサーバー起動 → 生徒は attach
+vibe-local --serve
+vibe-local --attach http://192.168.x.x:4096
+
+# 環境診断
+vibe-local --doctor
 ```
+
+TUIの中では `/theme` でテーマ変更、`Tab` で Plan（相談）/ Build（実行）モード切替ができます。
+
+既定のモデル表示は `vibe-auto (おまかせ)` です。雑談は小型モデルが即答し、
+コーディングは大型モデルが引き受けます。特定モデルに固定したい時は TUI内の
+`/models` か、`vibe-local --no-router` を使ってください。
 
 ### 対応環境
 
 | 環境 | メモリ | モデル | 備考 |
 |------|--------|--------|------|
-| Apple Silicon Mac (M1以降) | 32GB+ | qwen3-coder:30b | 🏆 **推奨** |
-| Apple Silicon Mac (M1以降) | 16GB | qwen3:8b | ⭐ 十分実用的 |
-| Apple Silicon Mac (M1以降) | 8GB | qwen3:1.7b | 最低限動作 |
-| Intel Mac | 16GB+ | qwen3:8b | 動作するが遅め |
-| Linux (x86_64/arm64) | 16GB+ | qwen3:8b | NVIDIA GPU推奨 |
+| Apple Silicon Mac (M1以降) | 80GB+ | qwen3-coder-next | 🏆 52GB, 256Kコンテキスト |
+| Apple Silicon Mac (M1以降) | 32GB+ | qwen3.6:35b-a3b | ⭐ **推奨** 24GB |
+| Apple Silicon Mac (M1以降) | 16GB | gpt-oss:20b | ⭐ 14GB, 十分実用的 |
+| Apple Silicon Mac (M1以降) | 8GB | qwen3.5:4b | 最低限動作 |
+| Intel Mac / Linux | 16GB+ | gpt-oss:20b | 動作するが遅め |
 
 ### トラブルシューティング
 
@@ -91,19 +134,22 @@ ollama serve          # Linux
 
 **"モデルが見つかりません"**
 ```bash
-ollama pull qwen3:8b
+ollama pull qwen3.6:35b-a3b     # 自分のRAM帯のモデル名は vibe-local --doctor で確認
 ```
 
-**"claude: command not found"**
+**"opencode が未インストールです"**
 ```bash
-npm install -g @anthropic-ai/claude-code
+brew install opencode
 ```
 
 **モデルを変更したい**
 ```bash
-nano ~/.config/vibe-local/config
-# MODEL="qwen3:8b" を変更
+vibe-local --model <モデル名>
+# または ~/.config/vibe-local/v2.conf の BASE_MODEL を編集して
+vibe-local --rebuild
 ```
+
+**テーマを変えたい** — `vibe-local --theme vaporwave`（黒灰に戻すなら `--theme null`）、または TUI内で `/theme`
 
 </details>
 
@@ -148,6 +194,9 @@ vibe-local -p "Pythonで じゃんけんゲームを つくって"
 
 AIは かんぺきでは ありません。まちがった コマンドを うつことが あります。
 
+ふつうに つかうと、AIは なにかを する まえに 「これを やっていい？」と きいてきます。
+**わからない ときは 「いいえ」を えらんで ください。**
+
 **きけんな サイン — こんな コマンドは ゆるさないで！**
 
 | きけんな キーワード | なぜ あぶない？ |
@@ -158,8 +207,7 @@ AIは かんぺきでは ありません。まちがった コマンドを う�
 
 **あんぜんに つかう ほうほう：**
 
-- はじめて つかうときは、しつもんに **`n`** を おして ください（あんぜんモード）
-- AIが コマンドを うつまえに、「これを うっていい？」と きいてきます
+- AIが コマンドを うつまえに、「これを やっていい？」と きいてきます
 - わからない コマンドは **ぜったいに ゆるさないで ください**
 - だいじな ファイルが ある フォルダでは つかわないで ください
 - こまったら、`Ctrl+C` で とめられます
@@ -171,7 +219,7 @@ AIは かんぺきでは ありません。まちがった コマンドを う�
 ### What is this?
 
 A free AI coding environment you can set up with a single command on your Mac.
-No network required. Completely free. Uses Ollama + local LLM with the Claude Code interface.
+No network required. Completely free. Ollama + local LLM + the OpenCode TUI.
 
 ### Install (3 steps)
 
@@ -198,22 +246,40 @@ vibe-local
 # One-shot (ask once)
 vibe-local -p "Create a snake game in Python"
 
-# Auto-detect network (uses Claude API if online, local if offline)
+# Auto-detect network (uses Claude Code if online, local if offline)
 vibe-local --auto
 
+# Snappy mode (small model as the main driver)
+vibe-local --fast
+
 # Specify model manually
-vibe-local --model qwen3:8b
+vibe-local --model devstral
+
+# Switch theme (null = black & gray, default / vaporwave)
+vibe-local --theme vaporwave
+
+# Use the Claude Code CLI as the UI (compatibility mode)
+vibe-local --classic
+
+# Classroom mode: teacher runs the server, students attach
+vibe-local --serve
+vibe-local --attach http://192.168.x.x:4096
+
+# Diagnostics
+vibe-local --doctor
 ```
+
+Inside the TUI: `/theme` switches themes, `Tab` toggles Plan / Build mode.
 
 ### Supported Environments
 
 | Environment | RAM | Model | Notes |
 |-------------|-----|-------|-------|
-| Apple Silicon Mac (M1+) | 32GB+ | qwen3-coder:30b | 🏆 **Recommended** |
-| Apple Silicon Mac (M1+) | 16GB | qwen3:8b | ⭐ Very capable |
-| Apple Silicon Mac (M1+) | 8GB | qwen3:1.7b | Minimum viable |
-| Intel Mac | 16GB+ | qwen3:8b | Works but slower |
-| Linux (x86_64/arm64) | 16GB+ | qwen3:8b | NVIDIA GPU recommended |
+| Apple Silicon Mac (M1+) | 80GB+ | qwen3-coder-next | 🏆 52GB, 256K context |
+| Apple Silicon Mac (M1+) | 32GB+ | qwen3.6:35b-a3b | ⭐ **Recommended**, 24GB |
+| Apple Silicon Mac (M1+) | 16GB | gpt-oss:20b | ⭐ 14GB, very capable |
+| Apple Silicon Mac (M1+) | 8GB | qwen3.5:4b | Minimum viable |
+| Intel Mac / Linux | 16GB+ | gpt-oss:20b | Works but slower |
 
 ### Troubleshooting
 
@@ -228,18 +294,19 @@ ollama serve          # Linux
 
 **"model not found"**
 ```bash
-ollama pull qwen3:8b
+ollama pull qwen3.6:35b-a3b     # check your RAM tier's model with: vibe-local --doctor
 ```
 
-**"claude: command not found"**
+**"opencode not installed"**
 ```bash
-npm install -g @anthropic-ai/claude-code
+brew install opencode
 ```
 
 **Change model**
 ```bash
-nano ~/.config/vibe-local/config
-# Change MODEL="qwen3:8b"
+vibe-local --model <name>
+# or edit BASE_MODEL in ~/.config/vibe-local/v2.conf, then
+vibe-local --rebuild
 ```
 
 </details>
@@ -251,7 +318,7 @@ nano ~/.config/vibe-local/config
 ### 这是什么？
 
 在Mac上只需复制粘贴一个命令，AI就能帮你写代码。
-无需网络，完全免费。使用 Ollama + 本地大语言模型，享受 Claude Code 的界面体验。
+无需网络，完全免费。Ollama + 本地大语言模型 + OpenCode 终端界面。
 
 ### 安装（3步）
 
@@ -278,22 +345,40 @@ vibe-local
 # 单次执行（只问一次）
 vibe-local -p "用Python写一个贪吃蛇游戏"
 
-# 自动检测网络（有网用Claude API，没网用本地）
+# 自动检测网络（有网用Claude Code，没网用本地）
 vibe-local --auto
 
+# 快速模式（用小模型作为主力）
+vibe-local --fast
+
 # 手动指定模型
-vibe-local --model qwen3:8b
+vibe-local --model devstral
+
+# 切换主题（null = 黑灰色，默认 / vaporwave）
+vibe-local --theme vaporwave
+
+# 兼容模式（用 Claude Code CLI 作为界面）
+vibe-local --classic
+
+# 教室模式：老师启动服务器，学生连接
+vibe-local --serve
+vibe-local --attach http://192.168.x.x:4096
+
+# 环境诊断
+vibe-local --doctor
 ```
+
+在TUI中：`/theme` 切换主题，`Tab` 切换 Plan / Build 模式。
 
 ### 支持的环境
 
 | 环境 | 内存 | 模型 | 备注 |
 |------|------|------|------|
-| Apple Silicon Mac (M1及以上) | 32GB+ | qwen3-coder:30b | 🏆 **推荐** |
-| Apple Silicon Mac (M1及以上) | 16GB | qwen3:8b | ⭐ 足够实用 |
-| Apple Silicon Mac (M1及以上) | 8GB | qwen3:1.7b | 最低限运行 |
-| Intel Mac | 16GB+ | qwen3:8b | 可运行但较慢 |
-| Linux (x86_64/arm64) | 16GB+ | qwen3:8b | 推荐NVIDIA GPU |
+| Apple Silicon Mac (M1及以上) | 80GB+ | qwen3-coder-next | 🏆 52GB, 256K上下文 |
+| Apple Silicon Mac (M1及以上) | 32GB+ | qwen3.6:35b-a3b | ⭐ **推荐** 24GB |
+| Apple Silicon Mac (M1及以上) | 16GB | gpt-oss:20b | ⭐ 14GB, 足够实用 |
+| Apple Silicon Mac (M1及以上) | 8GB | qwen3.5:4b | 最低限运行 |
+| Intel Mac / Linux | 16GB+ | gpt-oss:20b | 可运行但较慢 |
 
 ### 故障排除
 
@@ -308,39 +393,43 @@ ollama serve          # Linux
 
 **"未找到模型"**
 ```bash
-ollama pull qwen3:8b
+ollama pull qwen3.6:35b-a3b     # 用 vibe-local --doctor 查看你的内存档位对应的模型
 ```
 
-**"claude: command not found"**
+**"opencode 未安装"**
 ```bash
-npm install -g @anthropic-ai/claude-code
+brew install opencode
 ```
 
 **更换模型**
 ```bash
-nano ~/.config/vibe-local/config
-# 修改 MODEL="qwen3:8b"
+vibe-local --model <名称>
+# 或编辑 ~/.config/vibe-local/v2.conf 的 BASE_MODEL 后执行
+vibe-local --rebuild
 ```
 
 </details>
 
 ---
 
-## 🔧 Architecture
+## 🔧 Architecture (v2)
 
 ```
 User
   ↓
-vibe-local (launch script)
-  ↓
-Claude Code CLI (UI + agent features)
-  ↓
-anthropic-ollama-proxy (API translation)
-  ↓
-Ollama (local LLM runtime)
-  ↓
-qwen3-coder:30b (AI model)
+vibe-local (launcher)
+  ├─ RAM検出 → モデル選択 → num_ctx焼き込み別名 (vibe-coder / vibe-fast) を ollama create
+  ├─ OpenCode設定生成 (OPENCODE_CONFIG, ユーザーの素のOpenCode設定は汚さない)
+  │
+  ├─ 既定:      OpenCode TUI ──(OpenAI互換 /v1)──→ Ollama → ローカルLLM
+  ├─ --classic: Claude Code CLI ──(ネイティブ /v1/messages)──→ Ollama → ローカルLLM
+  ├─ --serve:   OpenCode server を LAN公開 (教室モード, 生徒は --attach)
+  └─ --auto:    オンライン→Claude Code(クラウド) / オフライン→ローカル
 ```
+
+v1 の自作変換プロキシ (`anthropic-ollama-proxy.py`) と MLX 直結サーバー (`localllm.py`) は
+Ollama のネイティブ Anthropic API 対応 (v0.14+, 2026-01) と MLX バックエンド (v0.19+) により
+役目を終え、`legacy/` にアーカイブされています。
 
 ## 🚨 Security / セキュリティ / 安全须知
 
@@ -348,8 +437,9 @@ qwen3-coder:30b (AI model)
 
 > **⚠️ このツールは自己責任でご利用ください。AIが実行するコマンドには注意が必要です。**
 
-`vibe-local` は初回起動時に **ツール自動許可モード** (`--dangerously-skip-permissions`) を使うか確認します。
-自動許可モードを選ぶと、AIがファイルの読み書き・コマンド実行・システム操作を **確認なしで** 実行します。
+v2 の既定は **毎回確認モード** です。AIがファイル編集・コマンド実行をする前に必ず許可を求めます。
+`vibe-local -y` を付けると **ツール自動許可モード** になり、AIが確認なしで
+ファイルの読み書き・コマンド実行・システム操作を行います。
 
 **ローカルLLMはクラウドAIより精度が低いため、意図しない危険な操作を実行するリスクがあります。**
 
@@ -368,14 +458,14 @@ AIが提案するコマンドの中に以下のキーワードが含まれてい
 
 #### 安全に使うためのルール
 
-1. **初回起動時は必ず `n`（通常モード）を選択する** — AIの各操作を事前に確認できます
-2. **わからないコマンドは許可しない** — 少しでも不安なら `n` で拒否
+1. **既定の毎回確認モードで使う** — AIの各操作を事前に確認できます
+2. **わからないコマンドは許可しない** — 少しでも不安なら拒否
 3. **大事なファイルがあるフォルダでは使わない** — 新しい空フォルダで練習
 4. **`sudo` を求められたら基本的に拒否** — ローカルLLMの判断でシステム操作させない
 5. **困ったら `Ctrl+C` で停止**
 
 ```bash
-vibe-local        # 通常モード（推奨）：毎回確認あり
+vibe-local        # 毎回確認モード（推奨・既定）
 vibe-local -y     # 自動許可モード（上級者向け・自己責任）
 ```
 
@@ -384,9 +474,9 @@ vibe-local -y     # 自動許可モード（上級者向け・自己責任）
 > **⚠️ だいじな おしらせ：AIは まちがえることが あります！**
 
 AIが うごかそうとする コマンド（めいれい）を よく みてください。
-わからない コマンドは、**ぜったいに `y`（はい）を おさないで ください。**
+わからない コマンドは、**ぜったいに ゆるさないで ください。**
 
-- さいしょに きかれたら **`n`** を おす → AIが まいかい 「これ やっていい？」と きく
+- ふつうの モードでは、AIが まいかい 「これ やっていい？」と きいてきます
 - `rm`（さくじょ）や `sudo`（かんりしゃ）が はいった コマンドは きけん
 - こまったら **`Ctrl+C`**（コントロール と C を いっしょに おす）で とまる
 - れんしゅうは **あたらしい からの フォルダ** で やる
@@ -395,34 +485,16 @@ AIが うごかそうとする コマンド（めいれい）を よく みて�
 
 > **⚠️ Use this tool at your own risk. Pay attention to the commands the AI executes.**
 
-On first launch, `vibe-local` asks whether to enable **auto-approve mode** (`--dangerously-skip-permissions`).
-In auto-approve mode, the AI can read/write files, execute commands, and modify your system **without asking**.
+v2 defaults to **ask-before-every-action mode**. With `vibe-local -y` the AI can read/write files,
+execute commands, and modify your system **without asking**.
 
 **Local LLMs are less accurate than cloud AI — they may attempt dangerous operations unintentionally.**
 
-#### Watch for these keywords in commands
-
-If a command contains any of these keywords and you don't fully understand it, **always reject:**
-
-| Keyword to watch | Risk |
-|---|---|
-| Commands starting with `sudo` | Runs with admin privileges — affects entire system |
-| `chmod` / `chown` | Changes file permissions and security settings |
-| `dd` / `mkfs` / `/dev/` | Directly modifies disks and partitions |
-| `>` overwriting config files | Important settings may be erased |
-| `--force` flag | Skips safety checks and forces execution |
-| Long commands you don't understand | If you can't read it, don't allow it |
-
-#### Rules for safe usage
-
-1. **Always choose `n` (normal mode) on first launch** — you approve each action
-2. **Never allow commands you don't understand** — if unsure, reject
-3. **Don't use in folders with important files** — practice in a new empty folder
-4. **Reject `sudo` requests** — don't let a local LLM run system-level commands
-5. **Press `Ctrl+C` to stop at any time**
+If a suggested command contains `sudo`, `chmod`/`chown`, `dd`/`mkfs`/`/dev/`, config-overwriting `>`,
+a `--force` flag, or anything you can't read — **reject it.**
 
 ```bash
-vibe-local        # Normal mode (recommended): confirms each action
+vibe-local        # Ask mode (recommended, default)
 vibe-local -y     # Auto-approve mode (advanced users only, at your own risk)
 ```
 
@@ -430,34 +502,16 @@ vibe-local -y     # Auto-approve mode (advanced users only, at your own risk)
 
 > **⚠️ 使用本工具风险自负。请注意AI执行的每一个命令。**
 
-首次启动时，`vibe-local` 会询问是否启用 **工具自动批准模式** (`--dangerously-skip-permissions`)。
-在自动批准模式下，AI可以读写文件、执行命令、修改系统，**无需确认**。
+v2 默认为**每次操作前确认**。使用 `vibe-local -y` 后，AI可以在**无需确认**的情况下
+读写文件、执行命令、修改系统。
 
 **本地LLM的精度低于云端AI，可能意外执行危险操作。**
 
-#### 注意以下关键词
-
-如果命令中包含以下关键词且你不完全理解其含义，**务必拒绝：**
-
-| 需注意的关键词 | 风险 |
-|---|---|
-| 以 `sudo` 开头的命令 | 以管理员权限运行，影响整个系统 |
-| `chmod` / `chown` | 更改文件权限和安全设置 |
-| `dd` / `mkfs` / `/dev/` | 直接操作磁盘和分区 |
-| 用 `>` 覆盖配置文件 | 重要设置可能被清除 |
-| 带 `--force` 的命令 | 跳过安全检查强制执行 |
-| 看不懂的长命令 | 看不懂 = 不能允许 |
-
-#### 安全使用规则
-
-1. **首次启动必须选择 `n`（普通模式）** — 每次操作前确认
-2. **不理解的命令一律拒绝** — 有疑问就按 `n`
-3. **不要在有重要文件的文件夹中使用** — 在新的空文件夹中练习
-4. **拒绝 `sudo` 请求** — 不要让本地LLM执行系统级命令
-5. **随时按 `Ctrl+C` 停止**
+如果命令中包含 `sudo`、`chmod`/`chown`、`dd`/`mkfs`/`/dev/`、覆盖配置的 `>`、`--force`，
+或任何你看不懂的内容——**务必拒绝。**
 
 ```bash
-vibe-local        # 普通模式（推荐）：每次操作前确认
+vibe-local        # 确认模式（推荐，默认）
 vibe-local -y     # 自动批准模式（仅限高级用户，风险自负）
 ```
 
@@ -466,8 +520,10 @@ vibe-local -y     # 自动批准模式（仅限高级用户，风险自负）
 ## ⚙️ Notes
 
 - Local LLM accuracy is lower than Claude API
-- First model download takes time (several GB to 20GB)
-- Use `vibe-local --auto` to auto-switch to Claude API when online
+- First model download takes time (2.7GB to 52GB depending on RAM)
+- Use `vibe-local --auto` to auto-switch to Claude Code when online
+- `vibe-coder` / `vibe-fast` are auto-generated Ollama model aliases with RAM-appropriate
+  `num_ctx` baked in (weights are shared with the base model — no extra disk usage)
 
 ---
 
@@ -482,11 +538,11 @@ vibe-local -y     # 自动批准模式（仅限高级用户，风险自负）
 
 ### 🇯🇵
 
-> **本プロジェクトは Anthropic 社とは一切関係ありません。**
-> Anthropic が提供・推奨・保証するものではありません。
+> **本プロジェクトは Anthropic 社、Alibaba 社、OpenAI 社、および OpenCode プロジェクトとは一切関係ありません。**
+> 各社が提供・推奨・保証するものではありません。
 > 「Claude」は Anthropic, PBC の商標です。本プロジェクトは非公式のコミュニティツールです。
 >
-> 本ツールは Claude Code CLI を非標準の方法で使用しています（ローカルプロキシ経由でサードパーティLLMに接続）。
+> `--classic` モードは Claude Code CLI を非標準の方法で使用します（ローカルLLMに接続）。
 > Claude Code CLI の利用規約に抵触する可能性があります。利用者は自身で利用規約を確認してください。
 >
 > 本ソフトウェアは現状有姿（AS IS）で提供され、明示的・暗示的を問わず、いかなる保証もありません。
@@ -495,13 +551,13 @@ vibe-local -y     # 自动批准模式（仅限高级用户，风险自负）
 
 ### 🇺🇸
 
-> **This project is NOT affiliated with, endorsed by, or associated with Anthropic.**
+> **This project is NOT affiliated with, endorsed by, or associated with Anthropic, Alibaba, OpenAI, or the OpenCode project.**
 > "Claude" is a trademark of Anthropic, PBC. This is an unofficial community tool.
 >
-> This tool uses the Claude Code CLI in a non-standard way (connecting to third-party LLMs via a local proxy).
+> The `--classic` mode uses the Claude Code CLI in a non-standard way (connecting to local LLMs).
 > This may not comply with the Claude Code CLI's terms of service. Users should review the terms themselves.
 >
-> Third-party dependencies (Ollama, Qwen models, Node.js, etc.) have their own licenses and terms.
+> Third-party dependencies (Ollama, OpenCode, Qwen/gpt-oss models, etc.) have their own licenses and terms.
 >
 > THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
 > The authors are not liable for any damages arising from the use of this software.
@@ -509,13 +565,13 @@ vibe-local -y     # 自动批准模式（仅限高级用户，风险自负）
 
 ### 🇨🇳
 
-> **本项目与 Anthropic 公司无任何关联。**
-> 非 Anthropic 提供、推荐或担保。"Claude"是 Anthropic, PBC 的商标。本项目是非官方社区工具。
+> **本项目与 Anthropic、Alibaba、OpenAI 及 OpenCode 项目无任何关联。**
+> 非其提供、推荐或担保。"Claude"是 Anthropic, PBC 的商标。本项目是非官方社区工具。
 >
-> 本工具以非标准方式使用 Claude Code CLI（通过本地代理连接第三方LLM）。
+> `--classic` 模式以非标准方式使用 Claude Code CLI（连接本地LLM）。
 > 这可能不符合 Claude Code CLI 的服务条款。用户应自行确认相关条款。
 >
-> 第三方依赖（Ollama、Qwen模型、Node.js等）有各自的许可证和使用条款。
+> 第三方依赖（Ollama、OpenCode、Qwen/gpt-oss模型等）有各自的许可证和使用条款。
 >
 > 本软件按"原样"提供，不提供任何明示或暗示的保证。
 > 作者不对因使用本软件而产生的任何损害承担责任。

@@ -598,20 +598,28 @@ echo -e "  ${PURPLE}┃${NC} 🧠 ${BOLD}${WHITE}$(msg mem_label): ${NEON_GREEN}
 echo -e "  ${PURPLE}┃${NC}    ${CYAN}▐${NEON_GREEN}${RAM_BAR}${CYAN}▌${NC} ${DIM}${GRAY}(${RAM_GB}/${RAM_DISPLAY_MAX}GB)${NC}"
 echo ""
 
+# 2026-07 世代モデルマトリクス (num_ctx調整済み別名は vibe-local.sh 初回起動時に生成)
+SMALL_BASE=""
 if [ -n "$MANUAL_MODEL" ]; then
     MODEL="$MANUAL_MODEL"
     vapor_info "$(msg manual_model): $MODEL"
+elif [ "$RAM_GB" -ge 80 ]; then
+    MODEL="qwen3-coder-next"
+    SMALL_BASE="qwen3.5:4b"
+    echo -e "  ${NEON_GREEN}┃${NC} 🏆 ${BOLD}${YELLOW}★★★ ＵＬＴＲＡ  ＭＯＤＥＬ ★★★${NC}"
+    echo -e "  ${NEON_GREEN}┃${NC}    ${BOLD}${WHITE}$MODEL${NC} ${DIM}(52GB, MoE 80B/A3B, 256K ctx, $(msg model_best))${NC}"
 elif [ "$RAM_GB" -ge 32 ]; then
-    MODEL="qwen3-coder:30b"
+    MODEL="qwen3.6:35b-a3b"
+    SMALL_BASE="qwen3.5:4b"
     echo -e "  ${NEON_GREEN}┃${NC} 🏆 ${BOLD}${YELLOW}★★★ ＢＥＳＴ  ＭＯＤＥＬ ★★★${NC}"
-    echo -e "  ${NEON_GREEN}┃${NC}    ${BOLD}${WHITE}$MODEL${NC} ${DIM}(19GB, MoE 3.3B active, $(msg model_best))${NC}"
+    echo -e "  ${NEON_GREEN}┃${NC}    ${BOLD}${WHITE}$MODEL${NC} ${DIM}(24GB, MoE 35B/A3B, $(msg model_best))${NC}"
 elif [ "$RAM_GB" -ge 16 ]; then
-    MODEL="qwen3:8b"
+    MODEL="gpt-oss:20b"
     echo -e "  ${MINT}┃${NC} ⭐ ${BOLD}${CYAN}★★ ＧＲＥＡＴ  ＭＯＤＥＬ ★★${NC}"
-    echo -e "  ${MINT}┃${NC}    ${BOLD}${WHITE}$MODEL${NC} ${DIM}(5GB, $(msg model_great))${NC}"
+    echo -e "  ${MINT}┃${NC}    ${BOLD}${WHITE}$MODEL${NC} ${DIM}(14GB, MXFP4, $(msg model_great))${NC}"
 elif [ "$RAM_GB" -ge 8 ]; then
-    MODEL="qwen3:1.7b"
-    vapor_warn "$MODEL (1.1GB, $(msg model_min))"
+    MODEL="qwen3.5:4b"
+    vapor_warn "$MODEL (2.7GB, $(msg model_min))"
     vapor_warn "$(msg model_recommend)"
 else
     vapor_error "$(msg mem_lack): ${RAM_GB}GB ($(msg mem_lack_min))"
@@ -672,52 +680,25 @@ else
     fi
 fi
 
-# --- Node.js ---
-if command -v node &>/dev/null; then
-    vapor_success "Node.js 💚 $(msg installed) ($(node --version))"
+# --- OpenCode (TUI本体, v2からClaude Code CLIの代わり) ---
+if command -v opencode &>/dev/null; then
+    vapor_success "OpenCode 🌴 $(msg installed) ($(opencode --version 2>/dev/null || echo '?'))"
 else
     if [ "$IS_MAC" -eq 1 ] && command -v brew &>/dev/null; then
-        if run_with_spinner "Node.js 💚 $(msg installing)" brew install node; then
-            vapor_success "Node.js 💚 $(msg install_done) ($(node --version 2>/dev/null || echo '?'))"
+        if run_with_spinner "OpenCode 🌴 $(msg installing)" brew install opencode; then
+            vapor_success "OpenCode 🌴 $(msg install_done) ($(opencode --version 2>/dev/null || echo '?'))"
         else
-            vapor_error "Node.js 💚 $(msg install_fail)"
-            vapor_warn "$(msg install_fail_hint): brew install node"
+            vapor_error "OpenCode 🌴 $(msg install_fail)"
+            vapor_warn "$(msg install_fail_hint): brew install opencode"
         fi
-    elif [ "$IS_LINUX" -eq 1 ]; then
-        if command -v apt-get &>/dev/null; then
-            run_with_spinner "Node.js 💚 $(msg installing)" bash -c "curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - && sudo apt-get install -y nodejs"
-        elif command -v dnf &>/dev/null; then
-            run_with_spinner "Node.js 💚 $(msg installing)" sudo dnf install -y nodejs
-        else
-            vapor_error "$(msg no_pkgmgr)"
-        fi
-        if command -v node &>/dev/null; then
-            vapor_success "Node.js 💚 $(msg install_done) ($(node --version))"
-        else
-            vapor_error "Node.js 💚 $(msg install_fail)"
-            vapor_warn "$(msg install_fail_hint): sudo apt-get install -y nodejs"
-        fi
-    fi
-fi
-
-# --- Claude Code CLI ---
-if command -v claude &>/dev/null; then
-    vapor_success "Claude Code CLI 🤖 $(msg installed)"
-else
-    # npm install -g は権限エラーになることがある
-    if run_with_spinner "Claude Code CLI 🤖 $(msg installing)" npm install -g @anthropic-ai/claude-code; then
-        vapor_success "Claude Code CLI 🤖 $(msg install_done)"
     else
-        # 権限エラーの可能性 → npm prefix を変更して再試行
-        vapor_warn "$(msg npm_perm)"
-        mkdir -p "${HOME}/.npm-global"
-        npm config set prefix "${HOME}/.npm-global" 2>/dev/null || true
-        export PATH="${HOME}/.npm-global/bin:${PATH}"
-        if run_with_spinner "Claude Code CLI 🤖 $(msg installing)" npm install -g @anthropic-ai/claude-code; then
-            vapor_success "Claude Code CLI 🤖 $(msg install_done)"
+        # クロスプラットフォーム公式インストーラ (Node不要)
+        if run_with_spinner "OpenCode 🌴 $(msg installing)" bash -c "curl -fsSL https://opencode.ai/install | bash"; then
+            export PATH="${HOME}/.opencode/bin:${HOME}/.local/bin:${PATH}"
+            vapor_success "OpenCode 🌴 $(msg install_done)"
         else
-            vapor_error "Claude Code CLI 🤖 $(msg install_fail)"
-            vapor_warn "$(msg install_fail_hint): npm install -g @anthropic-ai/claude-code"
+            vapor_error "OpenCode 🌴 $(msg install_fail)"
+            vapor_warn "$(msg install_fail_hint): curl -fsSL https://opencode.ai/install | bash"
         fi
     fi
 fi
@@ -804,6 +785,20 @@ else
     echo ""
 fi
 
+# 軽量サブモデル (タイトル生成等の高速タスク用, 32GB+のみ)
+if [ -n "$SMALL_BASE" ]; then
+    if curl -s "http://localhost:11434/api/tags" 2>/dev/null | grep -q "$SMALL_BASE"; then
+        vapor_success "$SMALL_BASE $(msg model_downloaded) ⚡"
+    else
+        ollama pull "$SMALL_BASE" 2>/dev/null
+        if curl -s "http://localhost:11434/api/tags" 2>/dev/null | grep -q "$SMALL_BASE"; then
+            vapor_success "$SMALL_BASE $(msg model_dl_done) ⚡"
+        else
+            vapor_warn "$SMALL_BASE $(msg install_fail) - ollama pull $SMALL_BASE"
+        fi
+    fi
+fi
+
 # =============================================
 # Step 5: ファイル配置
 # =============================================
@@ -819,19 +814,25 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")
 
 vaporwave_progress "$(msg file_deploy)" 1.5
 
-if [ -n "$SCRIPT_DIR" ] && [ -f "${SCRIPT_DIR}/anthropic-ollama-proxy.py" ]; then
+if [ -n "$SCRIPT_DIR" ] && [ -f "${SCRIPT_DIR}/vibe-local.sh" ] && [ -f "${SCRIPT_DIR}/themes/vibe-null.json" ]; then
     vapor_info "$(msg source_local)"
-    cp "${SCRIPT_DIR}/anthropic-ollama-proxy.py" "$LIB_DIR/"
     cp "${SCRIPT_DIR}/vibe-local.sh" "$BIN_DIR/vibe-local"
+    cp "${SCRIPT_DIR}/themes/vibe-null.json" "$LIB_DIR/vibe-null.json"
+    cp "${SCRIPT_DIR}/themes/vibe-vaporwave.json" "$LIB_DIR/vibe-vaporwave.json"
+    cp "${SCRIPT_DIR}/tools/debrand.py" "$LIB_DIR/debrand.py"
+    cp "${SCRIPT_DIR}/tools/vibe-router.py" "$LIB_DIR/vibe-router.py"
 else
     REPO_RAW="https://raw.githubusercontent.com/ochyai/vibe-local/main"
     vapor_info "$(msg source_github)"
-    curl -fsSL "${REPO_RAW}/anthropic-ollama-proxy.py" -o "$LIB_DIR/anthropic-ollama-proxy.py"
     curl -fsSL "${REPO_RAW}/vibe-local.sh" -o "$BIN_DIR/vibe-local"
+    curl -fsSL "${REPO_RAW}/themes/vibe-null.json" -o "$LIB_DIR/vibe-null.json"
+    curl -fsSL "${REPO_RAW}/themes/vibe-vaporwave.json" -o "$LIB_DIR/vibe-vaporwave.json"
+    curl -fsSL "${REPO_RAW}/tools/debrand.py" -o "$LIB_DIR/debrand.py"
+    curl -fsSL "${REPO_RAW}/tools/vibe-router.py" -o "$LIB_DIR/vibe-router.py"
 fi
 
 chmod +x "$BIN_DIR/vibe-local"
-vapor_success "Proxy → $LIB_DIR/"
+vapor_success "Themes → $LIB_DIR/ (vibe-null=既定, vibe-vaporwave)"
 vapor_success "Command → $BIN_DIR/vibe-local"
 
 # =============================================
@@ -840,7 +841,7 @@ vapor_success "Command → $BIN_DIR/vibe-local"
 step_header 6 "$(msg step6)"
 
 CONFIG_DIR="${HOME}/.config/vibe-local"
-CONFIG_FILE="${CONFIG_DIR}/config"
+CONFIG_FILE="${CONFIG_DIR}/v2.conf"   # v1の config とは別ファイル (他ツールとの設定ドリフト対策)
 
 mkdir -p "$CONFIG_DIR"
 
@@ -849,12 +850,19 @@ vaporwave_progress "$(msg config_gen)" 1
 if [ -f "$CONFIG_FILE" ]; then
     vapor_warn "$(msg config_exists)"
 else
+    # NUM_CTX はRAM相応の既定値。vibe-local.sh 初回起動時に別名モデル
+    # (vibe-coder/vibe-fast) として num_ctx が焼き込まれる
+    if [ "$RAM_GB" -ge 80 ]; then NUM_CTX=131072
+    elif [ "$RAM_GB" -ge 32 ]; then NUM_CTX=65536
+    elif [ "$RAM_GB" -ge 16 ]; then NUM_CTX=65536
+    else NUM_CTX=32768; fi
     cat > "$CONFIG_FILE" << EOF
-# vibe-local config
+# vibe-local v2 config
 # Auto-generated: $(date '+%Y-%m-%d %H:%M:%S')
 
-MODEL="$MODEL"
-PROXY_PORT=8082
+BASE_MODEL="$MODEL"
+SMALL_BASE="$SMALL_BASE"
+NUM_CTX="$NUM_CTX"
 OLLAMA_HOST="http://localhost:11434"
 EOF
     vapor_success "$(msg config_file): $CONFIG_FILE"
@@ -901,33 +909,15 @@ else
     vapor_warn "Ollama Server       → 🟡 $(msg standby)"
 fi
 
-# テストプロキシ: 空きポートを探す
-TEST_PORT=8083
-for try_port in 8083 8084 8085 8086; do
-    if ! curl -s --max-time 1 "http://127.0.0.1:${try_port}/" &>/dev/null; then
-        TEST_PORT=$try_port
-        break
-    fi
-done
-
-TEST_STATE_DIR="${HOME}/.local/state/vibe-local"
-mkdir -p "$TEST_STATE_DIR" && chmod 700 "$TEST_STATE_DIR"
-python3 "$LIB_DIR/anthropic-ollama-proxy.py" "$TEST_PORT" &>"${TEST_STATE_DIR}/test-proxy.log" &
-TEST_PID=$!
-sleep 2
-
-if curl -s --max-time 2 "http://127.0.0.1:${TEST_PORT}/" &>/dev/null; then
-    vapor_success "API Proxy           → 🟢 $(msg online)"
+if command -v opencode &>/dev/null; then
+    vapor_success "OpenCode TUI        → 🟢 $(msg ready)"
 else
-    vapor_warn "API Proxy           → 🟡 $(msg warning)"
+    vapor_warn "OpenCode TUI        → 🟡 $(msg path_reopen)"
 fi
-kill "$TEST_PID" 2>/dev/null || true
-wait "$TEST_PID" 2>/dev/null || true
 
-if command -v claude &>/dev/null; then
-    vapor_success "Claude Code CLI     → 🟢 $(msg ready)"
-else
-    vapor_warn "Claude Code CLI     → 🟡 $(msg path_reopen)"
+# Ollama ネイティブ Anthropic 互換 API (--classic で使用, 0.14+)
+if curl -s --max-time 2 "http://localhost:11434/api/version" 2>/dev/null | grep -qE '"version"'; then
+    vapor_success "Ollama /v1 API      → 🟢 $(msg online)"
 fi
 
 if curl -s "http://localhost:11434/api/tags" 2>/dev/null | grep -q "$MODEL"; then
