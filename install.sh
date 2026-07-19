@@ -13,6 +13,21 @@
 # 各ステップで個別にエラーハンドリングする
 set -uo pipefail
 
+# --- Windows detection: redirect to PowerShell installer ---
+case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*)
+        echo "Windows detected (Git Bash / MSYS2). Launching PowerShell installer..."
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-}")" 2>/dev/null && pwd || echo ".")"
+        if [ -f "${SCRIPT_DIR}/install.ps1" ]; then
+            powershell.exe -ExecutionPolicy Bypass -File "${SCRIPT_DIR}/install.ps1" "$@"
+        else
+            echo "Error: install.ps1 not found. Download from:"
+            echo "  https://github.com/ochyai/vibe-local"
+        fi
+        exit $?
+        ;;
+esac
+
 # ╔══════════════════════════════════════════════════════════════╗
 # ║  🎨  Ｖ Ａ Ｐ Ｏ Ｒ Ｗ Ａ Ｖ Ｅ   Ｃ Ｏ Ｌ Ｏ Ｒ Ｓ    ║
 # ╚══════════════════════════════════════════════════════════════╝
@@ -387,7 +402,20 @@ vaporwave_progress() {
 #   → ログは $SPINNER_LOG に保存 (デバッグ用)
 #   → 戻り値: コマンドの終了コード
 
-SPINNER_LOG="/tmp/vibe-local-install-$$.log"
+# [SEC] Use mktemp for unpredictable temp file path (avoid symlink attacks)
+SPINNER_LOG="$(mktemp /tmp/vibe-local-install-XXXXXX.log 2>/dev/null || echo "/tmp/vibe-local-install-$RANDOM-$$.log")"
+
+# [SEC] Ensure temp log is cleaned up on exit or interrupt
+_INSTALL_OK=0
+cleanup() {
+    if [ "${_INSTALL_OK:-0}" -eq 0 ] && [ -f "${SPINNER_LOG:-}" ] && [ -s "$SPINNER_LOG" ]; then
+        echo ""
+        echo -e "  ${DIM}Install log saved: $SPINNER_LOG${NC}"
+    else
+        [ -f "${SPINNER_LOG:-}" ] && rm -f "$SPINNER_LOG"
+    fi
+}
+trap cleanup EXIT INT TERM
 
 run_with_spinner() {
     local label="$1"
@@ -446,10 +474,18 @@ MANUAL_MODEL=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --model)
+            if [[ $# -lt 2 ]]; then
+                vapor_error "$(msg unknown_opt): --model requires a value"
+                exit 1
+            fi
             MANUAL_MODEL="$2"
             shift 2
             ;;
         --lang)
+            if [[ $# -lt 2 ]]; then
+                vapor_error "$(msg unknown_opt): --lang requires a value"
+                exit 1
+            fi
             LANG_CODE="$2"
             shift 2
             ;;
@@ -459,6 +495,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --model MODEL  $(msg help_model)"
             echo "  --lang LANG    $(msg help_lang)"
+            echo "  --help, -h     Show this help"
             exit 0
             ;;
         *)
@@ -468,11 +505,22 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# --- Pre-flight: curl is required for downloads ---
+if ! command -v curl &>/dev/null; then
+    vapor_error "curl is not installed."
+    echo "  Install it:"
+    echo "    macOS:  xcode-select --install"
+    echo "    Debian/Ubuntu: sudo apt-get install -y curl"
+    echo "    RHEL/Fedora: sudo dnf install -y curl"
+    exit 1
+fi
+
 # ╔══════════════════════════════════════════════════════════════╗
 # ║  🌅  Ｔ Ｉ Ｔ Ｌ Ｅ   Ｓ Ｃ Ｒ Ｅ Ｅ Ｎ                ║
 # ╚══════════════════════════════════════════════════════════════╝
 
-clear 2>/dev/null || true
+# NOTE: Do not clear — preserve user's terminal scrollback context
+echo ""
 echo ""
 
 # Animated entrance
@@ -528,6 +576,20 @@ sleep 0.5
 echo ""
 
 # =============================================
+# Pre-flight: root check + HOME validation
+# =============================================
+if [ "$(id -u)" -eq 0 ]; then
+    echo -e "${RED}❌ Error: Do not run this script as root (sudo).${NC}"
+    echo -e "${DIM}   Run without sudo:  bash install.sh${NC}"
+    exit 1
+fi
+if [ -z "$HOME" ] || [ "$HOME" = "/" ]; then
+    echo -e "${RED}❌ Error: HOME is not set or invalid ('$HOME').${NC}"
+    echo -e "${DIM}   Set HOME first:  export HOME=~${NC}"
+    exit 1
+fi
+
+# =============================================
 # Step 1: OS / アーキテクチャ検出
 # =============================================
 step_header 1 "$(msg step1)"
@@ -546,7 +608,7 @@ case "$OS" in
         if [ "$ARCH" = "arm64" ]; then
             vapor_success "$(msg apple_silicon)"
         elif [ "$ARCH" = "x86_64" ]; then
-            vapor_warn "$(msg intel_mac)"
+            vapor_info "$(msg intel_mac)"
         else
             vapor_error "$(msg unsupported_arch): $ARCH"
             exit 1
@@ -568,6 +630,20 @@ case "$OS" in
         exit 1
         ;;
 esac
+
+# WSL detection (Windows Subsystem for Linux)
+IS_WSL=0
+if [ "$IS_LINUX" -eq 1 ] && (uname -r 2>/dev/null | grep -qi 'microsoft\|WSL'); then
+    IS_WSL=1
+    vapor_info "WSL (Windows Subsystem for Linux) detected"
+    vapor_info "Ollama should be installed in WSL, not Windows host"
+fi
+
+# Proxy environment detection
+if [ -n "${HTTP_PROXY:-}" ] || [ -n "${HTTPS_PROXY:-}" ] || [ -n "${http_proxy:-}" ] || [ -n "${https_proxy:-}" ]; then
+    vapor_info "Proxy detected: ${HTTP_PROXY:-${http_proxy:-${HTTPS_PROXY:-${https_proxy:-}}}}"
+    vapor_info "Model downloads will use your proxy settings"
+fi
 
 # =============================================
 # Step 2: RAM 検出 & モデル自動選択
@@ -599,6 +675,7 @@ echo -e "  ${PURPLE}┃${NC}    ${CYAN}▐${NEON_GREEN}${RAM_BAR}${CYAN}▌${NC}
 echo ""
 
 # 2026-07 世代モデルマトリクス (num_ctx調整済み別名は vibe-local.sh 初回起動時に生成)
+# SMALL_BASE = 小型サイドカー (雑談ルーティング先 / 権限チェック等)
 SMALL_BASE=""
 if [ -n "$MANUAL_MODEL" ]; then
     MODEL="$MANUAL_MODEL"
@@ -629,6 +706,10 @@ else
     exit 1
 fi
 
+# サイドカー小型モデル: v2 は SMALL_BASE を雑談ルーティング先に使う。
+# upstream の sidecar ダウンロード/診断ロジックはこの別名を参照するため橋渡しする。
+SIDECAR_MODEL="${SMALL_BASE:-}"
+
 # =============================================
 # Step 3: 依存パッケージインストール
 # =============================================
@@ -644,8 +725,13 @@ if [ "$IS_MAC" -eq 1 ]; then
         vapor_success "Homebrew 🍺 $(msg installed)"
     else
         vapor_info "$(msg brew_slow)"
+        vapor_warn "⚠️  A popup may appear asking to install Developer Tools — click Install if it does."
+        vapor_warn "⚠️  You may also be asked for your Mac password (sudo)."
         vapor_info "Homebrew 🍺 $(msg installing)"
-        if run_with_spinner "Homebrew 🍺 $(msg installing)" /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; then
+        echo ""
+        # NOTE: Do NOT use run_with_spinner here — Homebrew installer needs
+        # interactive TTY for sudo password prompt. Spinner would swallow it.
+        if /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; then
             if [ -f /opt/homebrew/bin/brew ]; then
                 eval "$(/opt/homebrew/bin/brew shellenv)"
             fi
@@ -653,6 +739,7 @@ if [ "$IS_MAC" -eq 1 ]; then
         else
             vapor_error "Homebrew 🍺 $(msg install_fail)"
             vapor_warn "$(msg install_fail_hint): /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+            exit 1
         fi
     fi
 fi
@@ -669,7 +756,11 @@ else
             vapor_warn "$(msg install_fail_hint): brew install ollama"
         fi
     elif [ "$IS_LINUX" -eq 1 ]; then
-        if run_with_spinner "Ollama 🦙 $(msg installing)" bash -c "curl -fsSL https://ollama.com/install.sh | sh"; then
+        # NOTE: Do NOT use run_with_spinner here — Ollama installer calls
+        # sudo internally and needs interactive TTY for password prompt.
+        vapor_info "Ollama 🦙 $(msg installing)"
+        echo ""
+        if bash -c "curl -fsSL https://ollama.com/install.sh | sh"; then
             vapor_success "Ollama 🦙 $(msg install_done)"
         else
             vapor_error "Ollama 🦙 $(msg install_fail)"
@@ -703,7 +794,21 @@ else
     fi
 fi
 
-# --- Python3 ---
+# --- Node.js (optional, for --auto mode Claude Code fallback) ---
+if command -v node &>/dev/null; then
+    vapor_success "Node.js 💚 $(msg installed) ($(node --version)) [optional]"
+else
+    vapor_info "Node.js 💚 not installed (optional — only needed for --auto mode with Claude Code)"
+fi
+
+# --- Claude Code CLI (optional, for --auto / --classic mode fallback) ---
+if command -v claude &>/dev/null; then
+    vapor_success "Claude Code CLI 🤖 $(msg installed) [optional]"
+else
+    vapor_info "Claude Code CLI 🤖 not installed (optional — needed only for --auto/--classic)"
+fi
+
+# --- Python3 (REQUIRED for vibe-coder) ---
 if command -v python3 &>/dev/null; then
     vapor_success "Python3 🐍 $(msg installed) ($(python3 --version 2>/dev/null))"
 else
@@ -719,6 +824,12 @@ else
             run_with_spinner "Python3 🐍 $(msg installing)" sudo apt-get install -y python3
         elif command -v dnf &>/dev/null; then
             run_with_spinner "Python3 🐍 $(msg installing)" sudo dnf install -y python3
+        elif command -v pacman &>/dev/null; then
+            run_with_spinner "Python3 🐍 $(msg installing)" sudo pacman -S --noconfirm python
+        elif command -v zypper &>/dev/null; then
+            run_with_spinner "Python3 🐍 $(msg installing)" sudo zypper install -y python3
+        elif command -v apk &>/dev/null; then
+            run_with_spinner "Python3 🐍 $(msg installing)" sudo apk add python3
         fi
         if command -v python3 &>/dev/null; then
             vapor_success "Python3 🐍 $(msg install_done)"
@@ -757,32 +868,88 @@ if ! curl -s --max-time 2 "http://localhost:11434/api/tags" &>/dev/null; then
     if curl -s --max-time 2 "http://localhost:11434/api/tags" &>/dev/null; then
         vapor_success "Ollama 🦙 $(msg online)"
     else
-        vapor_warn "Ollama 🦙 $(msg standby)"
+        vapor_error "Ollama failed to start after 30 seconds."
+        echo "  Possible causes:"
+        echo "    - Ollama was not installed correctly"
+        echo "    - Another process is using port 11434"
+        echo "  Try:"
+        echo "    ollama serve    (in a separate terminal)"
+        echo "  Then re-run: bash install.sh"
+        exit 1
     fi
 fi
 
-# モデルダウンロード (ollama pull の出力をそのまま表示)
-if curl -s "http://localhost:11434/api/tags" 2>/dev/null | grep -q "$MODEL"; then
-    vapor_success "$MODEL $(msg model_downloaded) 🧠✨"
-else
+# Check disk space (warn if < 20GB free)
+if command -v df &>/dev/null; then
+    AVAIL_KB=$(df -k "$HOME" | awk 'NR==2{print $4}')
+    AVAIL_GB=$((AVAIL_KB / 1024 / 1024))
+    if [ "$AVAIL_GB" -lt 20 ]; then
+        vapor_warn "Low disk space: ${AVAIL_GB}GB available (20GB+ recommended for model download)"
+        echo "  Free up disk space if the download fails."
+    fi
+fi
+
+# Helper: download a model if not already present
+download_model() {
+    local model_name="$1"
+    local label="${2:-}"
+    if curl -s "http://localhost:11434/api/tags" 2>/dev/null | grep -qF "$model_name"; then
+        vapor_success "$model_name $(msg model_downloaded) 🧠✨ ${label}"
+        return 0
+    fi
     echo ""
     echo -e "  ${PINK}💜${MAGENTA}💜${PURPLE}💜${CYAN}💜${AQUA}💜${MINT}💜${NEON_GREEN}💜${YELLOW}💜${ORANGE}💜${CORAL}💜${HOT_PINK}💜${NC}"
-    echo -e "  ${BOLD}${MAGENTA}  🔽  ${WHITE}$MODEL ${CYAN}$(msg model_downloading)${NC}"
+    echo -e "  ${BOLD}${MAGENTA}  🔽  ${WHITE}$model_name ${CYAN}$(msg model_downloading) ${label}${NC}"
     echo -e "  ${DIM}${AQUA}      $(msg model_download_hint)${NC}"
     echo -e "  ${PINK}💜${MAGENTA}💜${PURPLE}💜${CYAN}💜${AQUA}💜${MINT}💜${NEON_GREEN}💜${YELLOW}💜${ORANGE}💜${CORAL}💜${HOT_PINK}💜${NC}"
     echo ""
-    # ollama pull はプログレスバーを stdout に出すのでそのまま見せる
-    # MLX 警告だけ stderr から除外
-    ollama pull "$MODEL" 2>/dev/null
-    echo ""
-    if curl -s "http://localhost:11434/api/tags" 2>/dev/null | grep -q "$MODEL"; then
-        echo -e "  ${PINK}💜${MAGENTA}💜${PURPLE}💜${CYAN}💜${AQUA}💜${MINT}💜${NEON_GREEN}💜${YELLOW}💜${ORANGE}💜${CORAL}💜${HOT_PINK}💜${NC}"
-        vapor_success "$MODEL $(msg model_dl_done) 🧠🎉"
-        echo -e "  ${PINK}💜${MAGENTA}💜${PURPLE}💜${CYAN}💜${AQUA}💜${MINT}💜${NEON_GREEN}💜${YELLOW}💜${ORANGE}💜${CORAL}💜${HOT_PINK}💜${NC}"
-    else
-        vapor_warn "$MODEL $(msg install_fail) - ollama pull $MODEL"
+    # Pull with retry (up to 3 attempts). Use timeout if available (not on macOS by default).
+    local pull_ok=0
+    local _timeout_cmd=""
+    if command -v timeout &>/dev/null; then
+        _timeout_cmd="timeout 1800"
+    elif command -v gtimeout &>/dev/null; then
+        _timeout_cmd="gtimeout 1800"
+    fi
+    for attempt in 1 2 3; do
+        if ${_timeout_cmd} ollama pull "$model_name"; then
+            pull_ok=1
+            break
+        fi
+        if [ "$attempt" -lt 3 ]; then
+            echo -e "  ${YELLOW}⚠️  Download interrupted (attempt $attempt/3), retrying in 5s...${NC}"
+            sleep 5
+        fi
+    done
+    if [ "$pull_ok" -eq 0 ]; then
+        echo -e "  ${RED}⚠️  ダウンロード失敗 (3回試行) / Download failed after 3 attempts${NC}"
+        echo -e "  ${DIM}手動で再試行: ollama pull $model_name${NC}"
+        return 1
     fi
     echo ""
+    if curl -s "http://localhost:11434/api/tags" 2>/dev/null | grep -qF "$model_name"; then
+        echo -e "  ${PINK}💜${MAGENTA}💜${PURPLE}💜${CYAN}💜${AQUA}💜${MINT}💜${NEON_GREEN}💜${YELLOW}💜${ORANGE}💜${CORAL}💜${HOT_PINK}💜${NC}"
+        vapor_success "$model_name $(msg model_dl_done) 🧠🎉 ${label}"
+        echo -e "  ${PINK}💜${MAGENTA}💜${PURPLE}💜${CYAN}💜${AQUA}💜${MINT}💜${NEON_GREEN}💜${YELLOW}💜${ORANGE}💜${CORAL}💜${HOT_PINK}💜${NC}"
+    else
+        vapor_warn "$model_name $(msg install_fail) - ollama pull $model_name"
+        return 1
+    fi
+    echo ""
+    return 0
+}
+
+# Download main model
+if ! download_model "$MODEL" "(main)"; then
+    vapor_error "Failed to download main model: $MODEL"
+    vapor_warn "Try manually: ollama pull $MODEL"
+fi
+
+# Download sidecar model if different from main
+if [ -n "$SIDECAR_MODEL" ] && [ "$SIDECAR_MODEL" != "$MODEL" ]; then
+    if ! download_model "$SIDECAR_MODEL" "(sidecar)"; then
+        vapor_warn "Sidecar model download failed (non-critical): $SIDECAR_MODEL"
+    fi
 fi
 
 # 軽量サブモデル (タイトル生成等の高速タスク用, 32GB+のみ)
@@ -807,10 +974,31 @@ step_header 5 "$(msg step5)"
 LIB_DIR="${HOME}/.local/lib/vibe-local"
 BIN_DIR="${HOME}/.local/bin"
 
-mkdir -p "$LIB_DIR"
-mkdir -p "$BIN_DIR"
+# Check write permission before creating directories
+for _check_dir in "$LIB_DIR" "$BIN_DIR"; do
+    _parent="$(dirname "$_check_dir")"
+    while [ ! -d "$_parent" ] && [ "$_parent" != "/" ]; do
+        _parent="$(dirname "$_parent")"
+    done
+    if [ -d "$_parent" ] && [ ! -w "$_parent" ]; then
+        vapor_error "書き込み権限がありません: $_parent"
+        echo -e "  ${DIM}対処法: sudo mkdir -p ${_check_dir} && sudo chown \$USER ${_check_dir}${NC}"
+        exit 1
+    fi
+done
+unset _check_dir _parent
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+mkdir -p "$LIB_DIR" || { vapor_error "ディレクトリ作成失敗: $LIB_DIR"; exit 1; }
+mkdir -p "$BIN_DIR" || { vapor_error "ディレクトリ作成失敗: $BIN_DIR"; exit 1; }
+
+# Verify directories are writable after creation
+if ! [ -w "$LIB_DIR" ] || ! [ -w "$BIN_DIR" ]; then
+    vapor_error "Cannot write to $LIB_DIR or $BIN_DIR"
+    echo "  Fix: sudo chown -R \$USER ~/.local"
+    exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-}")" 2>/dev/null && pwd || echo "")"
 
 vaporwave_progress "$(msg file_deploy)" 1.5
 
@@ -821,14 +1009,23 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "${SCRIPT_DIR}/vibe-local.sh" ] && [ -f "${SCRIP
     cp "${SCRIPT_DIR}/themes/vibe-vaporwave.json" "$LIB_DIR/vibe-vaporwave.json"
     cp "${SCRIPT_DIR}/tools/debrand.py" "$LIB_DIR/debrand.py"
     cp "${SCRIPT_DIR}/tools/vibe-router.py" "$LIB_DIR/vibe-router.py"
+    # 内蔵Pythonエンジン (--vibe-coder モード / RAG 用)
+    [ -f "${SCRIPT_DIR}/vibe-coder.py" ] && cp "${SCRIPT_DIR}/vibe-coder.py" "$LIB_DIR/"
 else
     REPO_RAW="https://raw.githubusercontent.com/ochyai/vibe-local/main"
     vapor_info "$(msg source_github)"
-    curl -fsSL "${REPO_RAW}/vibe-local.sh" -o "$BIN_DIR/vibe-local"
+    if ! curl -fsSL "${REPO_RAW}/vibe-local.sh" -o "$BIN_DIR/vibe-local"; then
+        vapor_error "Failed to download vibe-local.sh from GitHub"
+        echo "  Check your internet connection or try again later."
+        exit 1
+    fi
     curl -fsSL "${REPO_RAW}/themes/vibe-null.json" -o "$LIB_DIR/vibe-null.json"
     curl -fsSL "${REPO_RAW}/themes/vibe-vaporwave.json" -o "$LIB_DIR/vibe-vaporwave.json"
     curl -fsSL "${REPO_RAW}/tools/debrand.py" -o "$LIB_DIR/debrand.py"
     curl -fsSL "${REPO_RAW}/tools/vibe-router.py" -o "$LIB_DIR/vibe-router.py"
+    # 内蔵Pythonエンジン (--vibe-coder モード / RAG 用) — 失敗しても TUI は動くので致命的にしない
+    curl -fsSL "${REPO_RAW}/vibe-coder.py" -o "$LIB_DIR/vibe-coder.py" || \
+        vapor_warn "vibe-coder.py のダウンロードに失敗 (--vibe-coder モードは後で手動配置が必要)"
 fi
 
 chmod +x "$BIN_DIR/vibe-local"
@@ -859,6 +1056,7 @@ else
     cat > "$CONFIG_FILE" << EOF
 # vibe-local v2 config
 # Auto-generated: $(date '+%Y-%m-%d %H:%M:%S')
+# Engine: vibe-coder (direct Ollama, no proxy needed)
 
 BASE_MODEL="$MODEL"
 SMALL_BASE="$SMALL_BASE"
@@ -873,19 +1071,32 @@ if echo "$PATH" | grep -q "${HOME}/.local/bin"; then
     BIN_IN_PATH=1
 fi
 
-if [ "$BIN_IN_PATH" -eq 0 ]; then
-    SHELL_RC=""
-    if [ -f "${HOME}/.zshrc" ]; then
-        SHELL_RC="${HOME}/.zshrc"
-    elif [ -f "${HOME}/.bashrc" ]; then
-        SHELL_RC="${HOME}/.bashrc"
-    fi
+# Detect shell rc file (used for PATH setup and post-install hint)
+SHELL_RC=""
+_current_shell="$(basename "${SHELL:-}" 2>/dev/null || echo "")"
+if [ "$_current_shell" = "fish" ] && [ -d "${HOME}/.config/fish" ]; then
+    SHELL_RC="${HOME}/.config/fish/config.fish"
+elif [ -f "${HOME}/.zshrc" ]; then
+    SHELL_RC="${HOME}/.zshrc"
+elif [ -f "${HOME}/.bashrc" ]; then
+    SHELL_RC="${HOME}/.bashrc"
+elif [ -f "${HOME}/.bash_profile" ]; then
+    SHELL_RC="${HOME}/.bash_profile"
+fi
+IS_FISH=0
+[ "$_current_shell" = "fish" ] && IS_FISH=1
+unset _current_shell
 
+if [ "$BIN_IN_PATH" -eq 0 ]; then
     if [ -n "$SHELL_RC" ]; then
         if ! grep -q '\.local/bin' "$SHELL_RC" 2>/dev/null; then
             echo '' >> "$SHELL_RC"
             echo '# vibe-local' >> "$SHELL_RC"
-            echo 'export PATH="${HOME}/.local/bin:${PATH}"' >> "$SHELL_RC"
+            if [ "$IS_FISH" -eq 1 ]; then
+                echo 'set -gx PATH $HOME/.local/bin $PATH' >> "$SHELL_RC"
+            else
+                echo 'export PATH="${HOME}/.local/bin:${PATH}"' >> "$SHELL_RC"
+            fi
             vapor_success "$(msg path_added) → $SHELL_RC"
         else
             vapor_success "$(msg path_set)"
@@ -915,19 +1126,38 @@ else
     vapor_warn "OpenCode TUI        → 🟡 $(msg path_reopen)"
 fi
 
+# 内蔵Pythonエンジン (--vibe-coder モード) の syntax チェック
+if [ -f "$LIB_DIR/vibe-coder.py" ] && python3 -c "import ast, sys; ast.parse(open(sys.argv[1]).read())" "$LIB_DIR/vibe-coder.py" 2>/dev/null; then
+    vapor_success "vibe-coder.py       → 🟢 $(msg ready)"
+elif [ -f "$LIB_DIR/vibe-coder.py" ]; then
+    vapor_warn "vibe-coder.py       → 🟡 $(msg warning) (syntax error)"
+fi
+
 # Ollama ネイティブ Anthropic 互換 API (--classic で使用, 0.14+)
 if curl -s --max-time 2 "http://localhost:11434/api/version" 2>/dev/null | grep -qE '"version"'; then
     vapor_success "Ollama /v1 API      → 🟢 $(msg online)"
 fi
 
-if curl -s "http://localhost:11434/api/tags" 2>/dev/null | grep -q "$MODEL"; then
+if curl -s "http://localhost:11434/api/tags" 2>/dev/null | grep -qF "$MODEL"; then
     vapor_success "AI Model ($MODEL) → 🟢 $(msg loaded)"
 else
-    vapor_warn "AI Model            → 🟡 $(msg not_loaded)"
+    vapor_warn "AI Model ($MODEL) → 🟡 $(msg not_loaded)"
 fi
 
-# テンポラリログ削除
+if [ -n "$SIDECAR_MODEL" ] && [ "$SIDECAR_MODEL" != "$MODEL" ]; then
+    if curl -s "http://localhost:11434/api/tags" 2>/dev/null | grep -qF "$SIDECAR_MODEL"; then
+        vapor_success "Sidecar  ($SIDECAR_MODEL) → 🟢 $(msg loaded)"
+    else
+        vapor_warn "Sidecar  ($SIDECAR_MODEL) → 🟡 $(msg not_loaded)"
+    fi
+fi
+
+# テンポラリログ削除 (成功時のみ — 失敗時はデバッグ用に残す)
+# Note: cleanup trap handles EXIT/INT/TERM anyway
 rm -f "$SPINNER_LOG"
+
+# If we reach here, install succeeded — update cleanup to not warn
+_INSTALL_OK=1
 
 # ╔══════════════════════════════════════════════════════════════╗
 # ║  🎆  Ｃ Ｏ Ｍ Ｐ Ｌ Ｅ Ｔ Ｅ !!                         ║
@@ -976,12 +1206,22 @@ rainbow_text "    ════════════════════�
 echo ""
 echo -e "    ${BOLD}${WHITE}⚙️  $(msg settings)${NC}"
 echo -e "    ${PURPLE}┃${NC} $(msg label_model):     ${BOLD}${NEON_GREEN}$MODEL${NC}"
+if [ -n "$SIDECAR_MODEL" ] && [ "$SIDECAR_MODEL" != "$MODEL" ]; then
+    echo -e "    ${PURPLE}┃${NC} Sidecar:    ${BOLD}${AQUA}$SIDECAR_MODEL${NC}"
+fi
 echo -e "    ${PURPLE}┃${NC} $(msg label_config):       ${AQUA}$CONFIG_FILE${NC}"
 echo -e "    ${PURPLE}┃${NC} $(msg label_command):   ${AQUA}$BIN_DIR/vibe-local${NC}"
 echo ""
 rainbow_text "    ═══════════════════════════════════════════════════════"
 echo ""
 echo -e "    ${YELLOW}${BOLD}⚡ $(msg reopen) ⚡${NC}"
+echo ""
+echo -e "    ${GREEN}Or run this in the current terminal:${NC}"
+if [ -n "${SHELL_RC:-}" ]; then
+    echo -e "    ${BOLD}source ${SHELL_RC} && vibe-local${NC}"
+else
+    echo -e "    ${BOLD}export PATH=\"\${HOME}/.local/bin:\${PATH}\" && vibe-local${NC}"
+fi
 echo ""
 echo ""
 

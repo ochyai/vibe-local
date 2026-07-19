@@ -876,6 +876,12 @@ class TestBackendIntegration:
 SHELL_SCRIPT = os.path.join(PROJECT_DIR, "vibe-local.sh")
 
 
+@pytest.mark.skipif(
+    not os.path.exists(SHELL_SCRIPT),
+    reason="v1 の --direct/MLX ランチャー (legacy/vibe-local.sh) は v2.2 で "
+    "アーカイブされていないためスキップ。v2 のランチャーは repo ルートの "
+    "vibe-local.sh で、tests/run.sh が検証する。",
+)
 class TestShellScript:
     """Test the vibe-local.sh shell script without actually running it fully."""
 

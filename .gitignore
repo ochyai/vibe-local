@@ -31,3 +31,6 @@ node_modules/
 *.swp
 *.swo
 *~
+
+# vibe-local RAG index (local, user-specific — not for version control)
+.vibe/rag/

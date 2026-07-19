@@ -97,6 +97,10 @@ vibe-local --theme vaporwave
 # Claude Code のUIで使いたい場合（互換モード）
 vibe-local --classic
 
+# 内蔵Pythonエンジン vibe-coder.py で起動（RAG・ツールコールXMLフォールバック対応）
+vibe-local --vibe-coder
+vibe-local --vibe-coder --rag --rag-path .
+
 # 教室モード: 先生のMacでサーバー起動 → 生徒は attach
 vibe-local --serve
 vibe-local --attach http://192.168.x.x:4096
@@ -421,15 +425,34 @@ vibe-local (launcher)
   ├─ RAM検出 → モデル選択 → num_ctx焼き込み別名 (vibe-coder / vibe-fast) を ollama create
   ├─ OpenCode設定生成 (OPENCODE_CONFIG, ユーザーの素のOpenCode設定は汚さない)
   │
-  ├─ 既定:      OpenCode TUI ──(OpenAI互換 /v1)──→ Ollama → ローカルLLM
-  ├─ --classic: Claude Code CLI ──(ネイティブ /v1/messages)──→ Ollama → ローカルLLM
-  ├─ --serve:   OpenCode server を LAN公開 (教室モード, 生徒は --attach)
-  └─ --auto:    オンライン→Claude Code(クラウド) / オフライン→ローカル
+  ├─ 既定:        OpenCode TUI ──(OpenAI互換 /v1)──→ Ollama → ローカルLLM
+  ├─ --classic:    Claude Code CLI ──(ネイティブ /v1/messages)──→ Ollama → ローカルLLM
+  ├─ --vibe-coder: 内蔵Pythonエンジン vibe-coder.py ──(/api/chat)──→ Ollama → ローカルLLM
+  ├─ --serve:      OpenCode server を LAN公開 (教室モード, 生徒は --attach)
+  └─ --auto:       オンライン→Claude Code(クラウド) / オフライン→ローカル
 ```
 
 v1 の自作変換プロキシ (`anthropic-ollama-proxy.py`) と MLX 直結サーバー (`localllm.py`) は
 Ollama のネイティブ Anthropic API 対応 (v0.14+, 2026-01) と MLX バックエンド (v0.19+) により
 役目を終え、`legacy/` にアーカイブされています。
+
+### 内蔵Pythonエンジン `vibe-coder.py` と RAG
+
+コミュニティ製の依存ゼロ (stdlib のみ) コーディングエージェント `vibe-coder.py` を
+`--vibe-coder`（別名 `--engine`）で起動できます。OpenCode / Node を使わず、
+Ollama の `/api/chat` に直結してツール実行ループを回します。主な機能:
+
+- **ローカル RAG**（`--rag`）: `sqlite3` + Ollama 埋め込みだけで、コードベースの関連コンテキストを
+  system prompt に注入。索引作成は `vibe-local --vibe-coder --rag-index <path>`、
+  参照は `--rag --rag-path .`。索引は `.vibe/rag/` に保存（git 管理外）。
+  トップK件数は `--rag-topk`、埋め込みモデルは `--rag-model`（既定 `nomic-embed-text`）で調整。
+- **ツールコール XML フォールバック**: ネイティブ tool_calls が来ない Qwen 系モデルでも、
+  応答テキスト中の XML 形式のツールコールを抽出して実行（ストリーミング応答でも動作）。
+- **堅牢な許可入力**: stdin が TTY でない場合も `/dev/tty` にフォールバック。日本語「はい」/
+  英語 `yes` / 中国語「是」の三言語で承認可能。
+
+`vibe-coder.py` は単体でも実行できます（`python3 vibe-coder.py -p "..."`）。
+Windows 向けには `install.ps1` / `vibe-local.ps1`（コミュニティ提供）も同梱しています。
 
 ## 🚨 Security / セキュリティ / 安全须知
 

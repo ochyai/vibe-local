@@ -20,3 +20,11 @@ v1 のプロキシには以下の既知バグがあり、修正せずアーカ�
 - system prompt を 4000 字で切り詰め（Claude Code の指示が大量欠落）
 - max_tokens 上限 4096（長い Write/Edit が途切れる）
 - OpenAI 互換経路のため num_ctx を指定できずコンテキストが黙って切り詰められる
+
+## 補足（2026-07 マージ）
+
+`anthropic-ollama-proxy.py` は upstream (`origin/main`) 側でも継続的に保守されており、
+本マージではその **最新の改良版** を `legacy/` に取り込んでいる（上記バグの一部は upstream 側で
+対処済み）。v2 の既定経路 (OpenCode / `--vibe-coder`) はこのプロキシを使わないため `legacy/`
+に置いているが、内容はコミュニティの最新版と一致している。単体起動は
+`python3 legacy/anthropic-ollama-proxy.py` で可能。

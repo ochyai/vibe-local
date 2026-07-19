@@ -22,6 +22,8 @@
 #   vibe-local -y                 # ツール自動許可 (上級者向け・自己責任)
 #   vibe-local --theme NAME       # テーマ切替 (null=黒灰 / vaporwave)
 #   vibe-local --classic          # Claude Code CLI をローカルLLMで使う (互換モード)
+#   vibe-local --vibe-coder ...    # 内蔵Pythonエンジン vibe-coder.py で起動 (RAG対応)
+#                                  #   例: vibe-local --vibe-coder --rag --rag-path .
 #   vibe-local --serve            # 教室モード: LANにサーバー公開 (実験的)
 #   vibe-local --attach URL       # 教室モード: 先生のサーバーに接続 (実験的)
 #   vibe-local --doctor           # 環境診断
@@ -599,6 +601,7 @@ YES_FLAG=0
 MODEL_OVERRIDE=0
 FAST_MODE=0
 CLASSIC=0
+VIBE_CODER=0
 SERVE=0
 ATTACH_URL=""
 PROMPT=""
@@ -617,6 +620,7 @@ while [[ $# -gt 0 ]]; do
         -y|--yes)   YES_FLAG=1; shift ;;
         --theme)    THEME_OVERRIDE="$2"; shift 2 ;;
         --classic)  CLASSIC=1; shift ;;
+        --vibe-coder|--engine) VIBE_CODER=1; shift ;;
         --serve)    SERVE=1; shift ;;
         --attach)   ATTACH_URL="$2"; shift 2 ;;
         -p|--prompt) PROMPT="$2"; shift 2 ;;
@@ -724,6 +728,29 @@ if [ "$CLASSIC" -eq 1 ]; then
     ANTHROPIC_SMALL_FAST_MODEL="$SMALL_ALIAS" \
     ANTHROPIC_DEFAULT_HAIKU_MODEL="$SMALL_ALIAS" \
     exec claude --model "$MAIN_ALIAS" ${CLASSIC_ARGS[@]+"${CLASSIC_ARGS[@]}"} ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
+fi
+
+# --- vibe-coder エンジンモード: 内蔵Python版 (RAG / tool-call XMLフォールバック / tty許可入力) ---
+# コミュニティ製 vibe-coder.py をそのまま起動する。OpenCode を使わず、
+# --rag などの vibe-coder.py 固有オプションはすべて EXTRA_ARGS 経由で透過する。
+if [ "$VIBE_CODER" -eq 1 ]; then
+    command -v python3 &>/dev/null || { echo "❌ python3 が未インストールです"; exit 1; }
+    VIBE_CODER_SCRIPT=""
+    for _p in "${SCRIPT_DIR}/vibe-coder.py" "${LIB_DIR}/vibe-coder.py"; do
+        [ -f "$_p" ] && { VIBE_CODER_SCRIPT="$_p"; break; }
+    done
+    [ -n "$VIBE_CODER_SCRIPT" ] || { echo "❌ vibe-coder.py が見つかりません (install.sh を実行してください)"; exit 1; }
+    warmup_model "$MAIN_ALIAS"
+    show_splash "vibe-coder (Python engine)" "${MAIN_ALIAS} (${BASE_MODEL})" "$SMALL_ALIAS" "${NUM_CTX} tok" "$PERM_LABEL"
+    echo " Engine: vibe-coder.py (direct, no proxy)"
+    echo ""
+    VC_ARGS=(-m "$MAIN_ALIAS")
+    [ "$YES_FLAG" -eq 1 ] && VC_ARGS+=(-y)
+    [ -n "$PROMPT" ] && VC_ARGS+=(-p "$PROMPT")
+    OLLAMA_HOST="$OLLAMA_HOST" \
+    VIBE_LOCAL_MODEL="$MAIN_ALIAS" \
+    VIBE_LOCAL_SIDECAR_MODEL="$SMALL_ALIAS" \
+    exec python3 "$VIBE_CODER_SCRIPT" "${VC_ARGS[@]}" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
 fi
 
 # --- TUI 準備 (OpenCodeエンジン) ---
