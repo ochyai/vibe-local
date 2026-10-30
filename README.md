@@ -448,6 +448,11 @@ Ollama の `/api/chat` に直結してツール実行ループを回します。
   トップK件数は `--rag-topk`、埋め込みモデルは `--rag-model`（既定 `nomic-embed-text`）で調整。
 - **ツールコール XML フォールバック**: ネイティブ tool_calls が来ない Qwen 系モデルでも、
   応答テキスト中の XML 形式のツールコールを抽出して実行（ストリーミング応答でも動作）。
+- **Planner-Actor**（`--tooluse-model <model>`、環境変数 `VIBE_LOCAL_TOOLUSE_MODEL`、
+  `~/.config/vibe-local/config` の `TOOLUSE_MODEL=`）: メインモデルが「次に〜を実行します」と
+  計画だけを返してツールを呼ばなかったとき、または解釈できないツールコールを書いたとき、
+  指定したツール呼び出しの得意なモデルに計画を渡してツールコールを作らせる。
+  例: `vibe-local --vibe-coder --tooluse-model qwen3:8b`。未指定なら何もしない。
 - **堅牢な許可入力**: stdin が TTY でない場合も `/dev/tty` にフォールバック。日本語「はい」/
   英語 `yes` / 中国語「是」の三言語で承認可能。
 

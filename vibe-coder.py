@@ -704,6 +704,7 @@ class Config:
         self.ollama_host = self.DEFAULT_OLLAMA_HOST
         self.model = self.DEFAULT_MODEL
         self.sidecar_model = self.DEFAULT_SIDECAR
+        self.tooluse_model = ""       # Planner-Actor: model that turns a plan into tool calls
         self.max_tokens = self.DEFAULT_MAX_TOKENS
         self.temperature = self.DEFAULT_TEMPERATURE
         self.context_window = self.DEFAULT_CONTEXT_WINDOW
@@ -784,6 +785,8 @@ class Config:
                         self.model = val
                     elif key == "SIDECAR_MODEL" and val:
                         self.sidecar_model = val
+                    elif key == "TOOLUSE_MODEL" and val:
+                        self.tooluse_model = val
                     elif key == "OLLAMA_HOST" and val:
                         self.ollama_host = val
                     elif key == "MAX_TOKENS" and val:
@@ -816,6 +819,8 @@ class Config:
             self.sidecar_model = os.environ["VIBE_CODER_SIDECAR"]
         if os.environ.get("VIBE_LOCAL_SIDECAR_MODEL"):
             self.sidecar_model = os.environ["VIBE_LOCAL_SIDECAR_MODEL"]
+        if os.environ.get("VIBE_LOCAL_TOOLUSE_MODEL"):
+            self.tooluse_model = os.environ["VIBE_LOCAL_TOOLUSE_MODEL"]
         if os.environ.get("VIBE_CODER_DEBUG") == "1" or os.environ.get("VIBE_LOCAL_DEBUG") == "1":
             self.debug = True
 
@@ -842,6 +847,8 @@ class Config:
         )
         parser.add_argument("-p", "--prompt", help="One-shot prompt (non-interactive)")
         parser.add_argument("-m", "--model", help="Ollama model name")
+        parser.add_argument("--tooluse-model",
+                            help="Model that emits tool calls when the main model only plans")
         parser.add_argument("-y", "--yes", action="store_true", help="Auto-approve all tool calls")
         parser.add_argument("--debug", action="store_true", help="Debug mode")
         parser.add_argument("--resume", action="store_true", help="Resume last session")
@@ -871,6 +878,8 @@ class Config:
             self.prompt = args.prompt
         if args.model:
             self.model = args.model
+        if args.tooluse_model:
+            self.tooluse_model = args.tooluse_model
         if args.yes or args.dangerously_skip_permissions:
             self.yes_mode = True
         if args.debug:
@@ -1108,12 +1117,12 @@ class Config:
             self.temperature = self.DEFAULT_TEMPERATURE
         # Validate model names — reject shell metacharacters / path traversal
         _SAFE_MODEL_RE = re.compile(r'^[a-zA-Z0-9_.:\-/]+$')
-        for attr in ("model", "sidecar_model"):
+        for attr in ("model", "sidecar_model", "tooluse_model"):
             val = getattr(self, attr, "")
             if val and not _SAFE_MODEL_RE.match(val):
                 print(f"{C.YELLOW}Warning: invalid {attr} name {val!r} — "
                       f"resetting to default.{C.RESET}", file=sys.stderr)
-                setattr(self, attr, "" if attr == "sidecar_model" else self.DEFAULT_MODEL)
+                setattr(self, attr, self.DEFAULT_MODEL if attr == "model" else "")
 
     def _ensure_dirs(self):
         for d in [self.config_dir, self.state_dir, self.sessions_dir]:
@@ -5222,6 +5231,33 @@ def _extract_tool_calls_from_text(text, known_tools=None):
     return deduped, remaining_text.strip()
 
 
+# Planner-Actor: signs that a reply without parsed tool calls still meant to act.
+# Structural markers are the primary signal: a tool call was attempted but
+# _extract_tool_calls_from_text could not parse it (malformed or unknown format).
+_UNPARSED_TOOL_CALL_RE = re.compile(
+    r'<(?:tool_call|function_calls|invoke|function=)'
+    r'|\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"(?:arguments|parameters)"\s*:',
+    re.IGNORECASE)
+# Secondary signal: the reply announces the next action instead of taking it.
+# Phrases are future tense ("I'll run", "実行します") so that a finished turn's
+# summary ("I ran", "実行しました", "let me know") does not match.
+_ACTION_INTENT_RE = re.compile(
+    r"\b(?:let me|i'll|i will|i'm going to|i am going to)\s+(?:now\s+)?"
+    r"(?:run|execute|read|open|create|write|edit|update|fix|check|search|install|call)\b"
+    r"|(?:実行し|作成し|編集し|修正し|確認し|検索し|インストールし|書き込み|読み込み|呼び出し)"
+    r"(?:ます|てみます)",
+    re.IGNORECASE)
+
+
+def _needs_tool_offload(text):
+    """True if a reply that has no parsed tool calls still intends to call a tool."""
+    if not text:
+        return False
+    if _UNPARSED_TOOL_CALL_RE.search(text):
+        return True
+    return bool(_ACTION_INTENT_RE.search(text))
+
+
 # ════════════════════════════════════════════════════════════════════════════════
 # Session — Conversation history management
 # ════════════════════════════════════════════════════════════════════════════════
@@ -6741,6 +6777,43 @@ class Agent:
                 return tasks
         return []
 
+    def _offload_tool_calls(self, user_input, plan_text, tools):
+        """Planner-Actor: ask config.tooluse_model to turn the planner's text into
+        tool calls. Returns OpenAI-format tool calls, or [] if none were produced."""
+        actor_messages = [
+            {"role": "system", "content": (
+                "You are a tool-use specialist. Convert the assistant's plan into "
+                "the tool calls that carry out its next step. Call tools only; "
+                "do not explain.\n"
+                f"Working directory: {self.config.cwd}\n"
+                f"Platform: {platform.system().lower()}")},
+            {"role": "user", "content": user_input},
+            {"role": "assistant", "content": plan_text},
+            {"role": "user", "content": "Call the tools for the next step of this plan now."},
+        ]
+        known = [t.get("function", {}).get("name", "") for t in tools]
+        self.tui.start_spinner(f"Acting ({self.config.tooluse_model})")
+        try:
+            resp = self.client.chat(model=self.config.tooluse_model,
+                                    messages=actor_messages,
+                                    tools=tools, stream=False)
+        except (RuntimeError, OSError) as e:  # OSError covers URLError and timeouts
+            self.tui._scroll_print(f"\n{C.YELLOW}Tool-use model {self.config.tooluse_model} "
+                                   f"failed: {e}{C.RESET}")
+            return []
+        finally:
+            self.tui.stop_spinner()
+        message = resp.get("choices", [{}])[0].get("message", {})
+        tool_calls = [tc for tc in message.get("tool_calls") or []
+                      if tc.get("function", {}).get("name") in known]
+        if not tool_calls:
+            content = re.sub(r'<think>[\s\S]*?</think>', '', message.get("content") or "")
+            tool_calls, _ = _extract_tool_calls_from_text(content, known)
+        if self.config.debug:
+            print(f"{C.DIM}[debug] Planner-Actor: {self.config.tooluse_model} returned "
+                  f"{len(tool_calls)} tool call(s){C.RESET}", file=sys.stderr)
+        return tool_calls
+
     def run(self, user_input):
         """Run the agent loop for a single user request."""
         _p = self.tui._scroll_print  # scroll-region-safe print
@@ -6895,6 +6968,13 @@ class Agent:
                         print(f"{C.DIM}[debug] Empty response (retry {_empty_retries}/3), backing off...{C.RESET}", file=sys.stderr)
                     time.sleep(_empty_retries * 0.5)  # exponential-ish backoff
                     continue
+
+                # 2b. Planner-Actor: the main model described its next step but
+                # emitted no tool call — ask the tool-use model to emit it.
+                if (not tool_calls and tools and self.config.tooluse_model
+                        and self.config.tooluse_model != self.config.model
+                        and _needs_tool_offload(text)):
+                    tool_calls = self._offload_tool_calls(user_input, text, tools)
 
                 # 3. Add to history
                 self.session.add_assistant_message(text, tool_calls if tool_calls else None)

@@ -10287,3 +10287,205 @@ class TestPermissionInputHandling:
                 with mock.patch.object(vc.TUI, "_read_permission_input", return_value=inp):
                     result = tui.ask_permission("Bash", {"command": "ls"})
                     assert result == "allow_all", f"Input '{inp}' should return 'allow_all'"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Planner-Actor (TOOLUSE_MODEL offloading)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _bash_schema():
+    return [{"type": "function", "function": {"name": "Bash", "parameters": {}}}]
+
+
+def _sync_reply(content="", tool_calls=None):
+    msg = {"role": "assistant", "content": content}
+    if tool_calls:
+        msg["tool_calls"] = tool_calls
+    return {"choices": [{"message": msg, "finish_reason": "stop"}], "usage": {}}
+
+
+def _bash_call(command):
+    return {"id": "call_1", "type": "function",
+            "function": {"name": "Bash", "arguments": json.dumps({"command": command})}}
+
+
+class TestPlannerActorTrigger:
+    """_needs_tool_offload: structural markers first, intent phrases second."""
+
+    def test_unparsed_tool_call_tags_trigger(self):
+        assert vc._needs_tool_offload("<tool_call>{broken json</tool_call>") is True
+        assert vc._needs_tool_offload('<function=Bash><parameter=cmd>ls') is True
+
+    def test_unparsed_json_tool_call_triggers(self):
+        assert vc._needs_tool_offload('{"name": "Bash", "arguments": {"command": "ls"') is True
+
+    def test_intent_phrase_is_case_insensitive(self):
+        """Review of PR #17: keywords must match regardless of case."""
+        assert vc._needs_tool_offload("I WILL RUN the tests.") is True
+        assert vc._needs_tool_offload("Let Me Read main.py first.") is True
+        assert vc._needs_tool_offload("i'll create the file.") is True
+
+    def test_japanese_intent_phrase_triggers(self):
+        assert vc._needs_tool_offload("まずテストを実行します。") is True
+        assert vc._needs_tool_offload("設定ファイルを読み込みます") is True
+
+    def test_finished_turn_does_not_trigger(self):
+        assert vc._needs_tool_offload("") is False
+        assert vc._needs_tool_offload("Done. Let me know if you need anything else.") is False
+        assert vc._needs_tool_offload("I ran the tests and all passed.") is False
+        assert vc._needs_tool_offload("テストを実行しました。すべて成功です。") is False
+
+    def test_tool_name_inside_words_does_not_trigger(self):
+        assert vc._needs_tool_offload("I already read it; Write access is fine.") is False
+
+
+class TestPlannerActorConfig:
+    """TOOLUSE_MODEL can come from the config file, the environment or the CLI."""
+
+    def test_default_is_disabled(self):
+        assert vc.Config().tooluse_model == ""
+
+    def test_config_file_key(self, tmp_path):
+        p = tmp_path / "config"
+        p.write_text('TOOLUSE_MODEL="qwen3:8b"\n')
+        cfg = vc.Config()
+        cfg._parse_config_file(str(p))
+        assert cfg.tooluse_model == "qwen3:8b"
+
+    def test_env_var(self):
+        cfg = vc.Config()
+        with mock.patch.dict(os.environ, {"VIBE_LOCAL_TOOLUSE_MODEL": "qwen3:4b"}):
+            cfg._load_env()
+        assert cfg.tooluse_model == "qwen3:4b"
+
+    def test_cli_arg(self):
+        cfg = vc.Config()
+        cfg._load_cli_args(["--tooluse-model", "llama3.1:8b"])
+        assert cfg.tooluse_model == "llama3.1:8b"
+
+    def test_invalid_name_is_cleared(self):
+        cfg = vc.Config()
+        cfg.tooluse_model = "qwen3:8b; rm -rf /"
+        cfg._validate_ollama_host()
+        assert cfg.tooluse_model == ""
+
+
+class TestPlannerActorOffload:
+    """Agent._offload_tool_calls asks the tool-use model for the planned call."""
+
+    def _agent(self, actor_reply):
+        config = mock.MagicMock()
+        config.model = "planner"
+        config.tooluse_model = "actor"
+        config.cwd = "/work"
+        config.debug = False
+        config.context_window = 8192
+        client = mock.MagicMock()
+        if isinstance(actor_reply, Exception):
+            client.chat.side_effect = actor_reply
+        else:
+            client.chat.return_value = actor_reply
+        tui = mock.MagicMock()
+        agent = vc.Agent(config, client, mock.MagicMock(), mock.MagicMock(),
+                         mock.MagicMock(), tui)
+        return agent, client, tui
+
+    def test_sends_request_and_plan_once_each(self):
+        """Review of PR #17: the actor prompt must not duplicate messages,
+        whatever the history length."""
+        agent, client, _ = self._agent(_sync_reply(tool_calls=[_bash_call("pytest")]))
+        agent._offload_tool_calls("run the tests", "I'll run pytest.", _bash_schema())
+        kwargs = client.chat.call_args.kwargs
+        assert kwargs["model"] == "actor"
+        assert kwargs["stream"] is False
+        roles = [m["role"] for m in kwargs["messages"]]
+        assert roles == ["system", "user", "assistant", "user"]
+        contents = [m["content"] for m in kwargs["messages"]]
+        assert contents.count("run the tests") == 1
+        assert contents.count("I'll run pytest.") == 1
+
+    def test_returns_native_tool_calls(self):
+        agent, _, _ = self._agent(_sync_reply(tool_calls=[_bash_call("pytest")]))
+        calls = agent._offload_tool_calls("run the tests", "I'll run pytest.", _bash_schema())
+        assert [c["function"]["name"] for c in calls] == ["Bash"]
+
+    def test_drops_tools_not_offered(self):
+        """The actor cannot call a tool the planner was not given (e.g. in plan mode)."""
+        write = {"id": "c2", "type": "function",
+                 "function": {"name": "Write", "arguments": "{}"}}
+        agent, _, _ = self._agent(_sync_reply(tool_calls=[write]))
+        assert agent._offload_tool_calls("x", "I'll write it.", _bash_schema()) == []
+
+    def test_extracts_tool_call_written_as_text(self):
+        reply = _sync_reply(
+            "<think>plan</think><function=Bash><parameter=command>pytest</parameter></function>")
+        agent, _, _ = self._agent(reply)
+        calls = agent._offload_tool_calls("run the tests", "I'll run pytest.", _bash_schema())
+        assert len(calls) == 1
+        assert json.loads(calls[0]["function"]["arguments"]) == {"command": "pytest"}
+
+    def test_client_error_is_reported_not_raised(self):
+        agent, _, tui = self._agent(RuntimeError("Model 'actor' not found"))
+        assert agent._offload_tool_calls("x", "I'll run it.", _bash_schema()) == []
+        printed = " ".join(str(c.args[0]) for c in tui._scroll_print.call_args_list)
+        assert "actor" in printed and "not found" in printed
+        tui.stop_spinner.assert_called()
+
+
+class TestPlannerActorAgentLoop:
+    """Agent.run executes the actor's tool call when the planner only describes it."""
+
+    def _run(self, tooluse_model, planner_texts):
+        config = mock.MagicMock()
+        config.model = "planner"
+        config.tooluse_model = tooluse_model
+        config.cwd = "/work"
+        config.debug = False
+        config.rag = False
+        config.context_window = 8192
+        client = mock.MagicMock()
+
+        def chat(model, messages, tools=None, stream=True):
+            if model == "actor":
+                return _sync_reply(tool_calls=[_bash_call("pytest")])
+            return _sync_reply()
+        client.chat.side_effect = chat
+        registry = mock.MagicMock()
+        registry.get_schemas.return_value = _bash_schema()
+        registry.names.return_value = ["Bash"]
+        bash = mock.MagicMock()
+        bash.execute.return_value = "1 passed"
+        registry.get.return_value = bash
+        permissions = mock.MagicMock()
+        permissions.check.return_value = True
+        session = mock.MagicMock()
+        session._just_compacted = False
+        session.get_token_estimate.return_value = 100
+        tui = mock.MagicMock()
+        tui.scroll_region._active = False
+        tui.show_sync_response.side_effect = [(t, []) for t in planner_texts]
+        agent = vc.Agent(config, client, registry, permissions, session, tui)
+        agent.file_watcher = mock.MagicMock(enabled=False)
+        with mock.patch.object(vc, "InputMonitor") as mon:
+            mon.return_value.pressed = False
+            agent.run("run the tests")
+        return client, bash, session
+
+    def test_plan_without_tool_call_is_offloaded_and_executed(self):
+        client, bash, session = self._run("actor", ["I'll run pytest now.", "All tests pass."])
+        assert [c.kwargs["model"] for c in client.chat.call_args_list] == \
+            ["planner", "actor", "planner"]
+        bash.execute.assert_called_once_with({"command": "pytest"})
+        first = session.add_assistant_message.call_args_list[0]
+        assert first.args[0] == "I'll run pytest now."
+        assert first.args[1][0]["function"]["name"] == "Bash"
+
+    def test_without_tooluse_model_the_turn_ends(self):
+        client, bash, _ = self._run("", ["I'll run pytest now."])
+        assert [c.kwargs["model"] for c in client.chat.call_args_list] == ["planner"]
+        bash.execute.assert_not_called()
+
+    def test_finished_answer_is_not_offloaded(self):
+        client, bash, _ = self._run("actor", ["All tests pass."])
+        assert [c.kwargs["model"] for c in client.chat.call_args_list] == ["planner"]
+        bash.execute.assert_not_called()
