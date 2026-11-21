@@ -1,5 +1,16 @@
 # 🤖⚡ Ｖ Ｉ Ｂ Ｅ  Ｌ Ｏ Ｃ Ａ Ｌ ⚡🤖
 
+<!-- about -->
+> **このリポは何か**：Ollamaで動くローカル言語モデルとターミナルで対話し、オフラインでコードを書ける学習環境。
+>
+> **What this is**: Learners can write code offline by chatting in the terminal with a local language model running through Ollama.
+>
+> **まず開く / Start here**：`vibe-local`
+>
+> **近いリポ / Related**：[co-vibe](https://github.com/ochyai/co-vibe)（タスクの複雑さに応じて複数のプロバイダからモデルを選ぶ。 / Selects models across providers according to task complexity.）
+<!-- /about -->
+
+
 ```
     ██╗   ██╗██╗██████╗ ███████╗
     ██║   ██║██║██╔══██╗██╔════╝
